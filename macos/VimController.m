@@ -543,7 +543,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"yank"]) {
-        [d vimYankURI];
+        if (c == 'Y') { [d vimYankSelection]; }
+        else { [d vimYankURI]; }
         return HBResultComplete;
     }
     if ([name isEqualToString:@"focuslast"]) {

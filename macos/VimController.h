@@ -46,7 +46,8 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error;
 - (void)vimFocusWebView;
 - (void)vimEnterPassThrough;                // ^Z
-- (void)vimYankURI;                         // y/Y
+- (void)vimYankURI;                         // y
+- (void)vimYankSelection;                   // Y: yank page selection
 - (void)vimSetMark:(unichar)c;              // m<char>
 - (void)vimJumpMark:(unichar)c;             // '<char>
 - (void)vimViewSource;                      // gf/gF

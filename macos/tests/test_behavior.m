@@ -60,6 +60,7 @@ static NSString *S(unichar c) {
 - (void)vimFocusWebView { [self record:@"focusweb"]; }
 - (void)vimEnterPassThrough { [self record:@"passthrough"]; }
 - (void)vimYankURI { [self record:@"yank"]; }
+- (void)vimYankSelection { [self record:@"yankselection"]; }
 - (void)vimSetMark:(unichar)c { [self record:[NSString stringWithFormat:@"setmark:%C", c]]; }
 - (void)vimJumpMark:(unichar)c { [self record:[NSString stringWithFormat:@"jumpmark:%C", c]]; }
 - (void)vimViewSource { [self record:@"viewsource"]; }
@@ -917,10 +918,11 @@ static void test_controller_openclipboard_yank_focus(void) {
     vc = newVc(spy); feed(vc, @"\""); feed(vc, @"a"); feed(vc, @"p");
     TEST_ASSERT_TRUE([spy.calls containsObject:@"clipboard:a"]);
 
-    // yank y / Y.
+    // yank y (URI) / Y (selection).
     [spy.calls removeAllObjects];
     feed(vc, @"y"); TEST_ASSERT_TRUE([spy.calls containsObject:@"yank"]);
-    feed(vc, @"Y"); TEST_ASSERT_TRUE([spy.calls containsObject:@"yank"]);
+    [spy.calls removeAllObjects];
+    feed(vc, @"Y"); TEST_ASSERT_TRUE([spy.calls containsObject:@"yankselection"]);
 
     // focuslast 'i'.
     [spy.calls removeAllObjects];

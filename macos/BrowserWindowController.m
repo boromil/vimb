@@ -1166,6 +1166,31 @@ static const CGFloat kStatusHeight = 24.0;
     [self showMessage:[NSString stringWithFormat:@"yanked %@", url] error:NO];
 }
 
+- (void)vimYankSelection {
+    // Y: yank the current page selection (command_yank COMMAND_YANK_SELECTION).
+    __weak typeof(self) weakSelf = self;
+    [self.activeTab.webView evaluateJavaScript:
+        @"(window.getSelection&&window.getSelection().toString?window.getSelection().toString():'')"
+        completionHandler:^(id result, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (error || ![result isKindOfClass:[NSString class]]) {
+                    [weakSelf showMessage:@"no selection to yank" error:YES];
+                    return;
+                }
+                NSString *sel = result;
+                if (sel.length == 0) {
+                    [weakSelf showMessage:@"no selection to yank" error:NO];
+                    return;
+                }
+                [weakSelf.registers set:sel forKey:'"'];
+                NSPasteboard *pb = [NSPasteboard generalPasteboard];
+                [pb clearContents];
+                [pb setString:sel forType:NSPasteboardTypeString];
+                [weakSelf showMessage:[NSString stringWithFormat:@"yanked %@", sel] error:NO];
+            });
+        }];
+}
+
 - (void)vimSetMark:(unichar)c {
     VimbMarks *marks = self.marks;
     KeyboardWebView *wv = self.activeTab.webView;
