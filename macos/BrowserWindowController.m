@@ -224,7 +224,13 @@ static const CGFloat kStatusHeight = 24.0;
 }
 
 - (void)rebuildTabBar {
-    for (NSButton *b in self.tabButtons) { [self.tabBar removeArrangedSubview:b]; }
+    for (NSButton *b in self.tabButtons) {
+        // removeArrangedSubview only removes the view from the arranged list;
+        // the button must also be removed from the view hierarchy, otherwise
+        // buttons pile up (and their constraints accumulate) on every rebuild.
+        [self.tabBar removeArrangedSubview:b];
+        [b removeFromSuperview];
+    }
     [self.tabButtons removeAllObjects];
     NSUInteger activeIdx = self.activeTab ? [self.tabs indexOfObject:self.activeTab] : NSNotFound;
     for (NSUInteger i = 0; i < self.tabs.count; i++) {
