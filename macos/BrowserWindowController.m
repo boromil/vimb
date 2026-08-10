@@ -168,7 +168,9 @@ static const CGFloat kStatusHeight = 24.0;
     _activeTab = tab;   // assign ivar directly to avoid recursive setter call
     self.currentWebviewHolder = tab.view;
     tab.view.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.webContainer addSubview:tab.view];
+    // Insert the web view BELOW the command/status overlays so they render
+    // on top of the page rather than being covered by it.
+    [self.webContainer addSubview:tab.view positioned:NSWindowBelow relativeTo:self.commandField];
     [NSLayoutConstraint activateConstraints:@[
         [tab.view.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor],
         [tab.view.trailingAnchor constraintEqualToAnchor:self.webContainer.trailingAnchor],
