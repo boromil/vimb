@@ -154,8 +154,9 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         case HBResultComplete:
             return YES;
         case HBResultMore:
-            // Still accumulating a chord (e.g. waiting for the second key).
-            return self.phase != HBPhaseStart;
+            // Still accumulating a chord (e.g. waiting for the second key) or
+            // building a count — all of these are consumed.
+            return YES;
         case HBResultError:
         default:
             return NO;
