@@ -1,4 +1,5 @@
 #import "VimbAppDelegate.h"
+#import "VimbConfig.h"
 
 @interface VimbAppDelegate () <NSApplicationDelegate>
 @end
@@ -19,6 +20,10 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     [self newWindowForCommandLineArguments];
+    // Source the user rc file; commands are routed to the commands' listener.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[VimbConfig shared] sourceConfigFile];
+    });
     [NSApp activateIgnoringOtherApps:YES];
 }
 

@@ -47,12 +47,21 @@ static const CGFloat kStatusHeight = 24.0;
         _marks = [[VimbMarks alloc] init];
         _tabs = [NSMutableArray array];
         _tabButtons = [NSMutableArray array];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(vimbRunCommand:)
+                                                     name:@"VimbRunCommand" object:nil];
         [self buildUI];
         window.delegate = self;
         [window center];
         [self newTabInWindow];
     }
     return self;
+}
+
+- (void)vimbRunCommand:(NSNotification *)note {
+    NSString *cmd = note.userInfo[@"command"];
+    if (cmd.length) {
+        [self.exEngine runCommand:cmd];
+    }
 }
 
 - (void)buildUI {
