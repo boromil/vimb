@@ -1,6 +1,10 @@
 #import "VimbConfig.h"
 #import "VimbEngine.h"
 
+@interface VimbConfig ()
+- (BOOL)uriPlausible:(NSString *)path;
+@end
+
 static const NSString *DOWNLOAD_COMMAND = @"/usr/bin/xdg-open %s 2>/dev/null";
 static const NSString *HINT_KEYS = @"abcdefghijklmnopqrstuvwxyz";
 static const NSString *HOME_PAGE = @"about:blank";
@@ -345,6 +349,62 @@ static NSString *replaceFirstPlaceholder(NSString *tmpl, NSInteger num, NSString
     // Full vimb shortcut engine (default shortcut template with $0..$N).
     NSString *url = [self shortcutURIForInput:query];
     return url ?: @"https://duckduckgo.com/html/?q=$0";
+}
+
+- (NSString *)loadURI:(NSString *)input {
+    NSString *path = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (path.length == 0) {
+        // No URL: load the configured home page (mirrors vb_load_uri empty).
+        NSString *home = [self getString:@"home-page" defaultValue:@"about:blank"];
+        return home.length ? home : @"about:blank";
+    }
+    // Contains "://" (no space) OR about: -> direct URL.
+    if (([path containsString:@"://"] && [path rangeOfString:@" "].location == NSNotFound)
+        || [path hasPrefix:@"about:"]) {
+        return path;
+    }
+    // A real local file path -> file://
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        NSString *abs = path.stringByStandardizingPath;
+        return [NSString stringWithFormat:@"file://%@", abs];
+    }
+    // Not a plausible URI -> search / shortcut expansion.
+    if (![self uriPlausible:path]) {
+        NSString *s = [self shortcutURIForInput:path];
+        if (s) { return s; }
+    }
+    // Fallback: treat as http host.
+    return [NSString stringWithFormat:@"http://%@", path];
+}
+
+// Port of src/main.c is_plausible_uri().
+- (BOOL)uriPlausible:(NSString *)path {
+    if ([path containsString:@" "]) { return NO; }
+    if ([path containsString:@"."]) { return YES; }
+    // "localhost" at start, or following '/' or '@', and followed by end, '/' or ':'.
+    NSRange lo = [path rangeOfString:@"localhost"];
+    if (lo.location != NSNotFound) {
+        BOOL beforeOK = (lo.location == 0)
+            || [path characterAtIndex:(lo.location - 1)] == '/'
+            || [path characterAtIndex:(lo.location - 1)] == '@';
+        NSUInteger afterIdx = lo.location + lo.length;
+        BOOL afterOK = (afterIdx >= path.length)
+            || [path characterAtIndex:afterIdx] == '/'
+            || [path characterAtIndex:afterIdx] == ':';
+        if (beforeOK && afterOK) { return YES; }
+    }
+    // IPv6 in brackets with a colon: "[...]:...]"
+    NSRange br = [path rangeOfString:@"["];
+    if (br.location != NSNotFound) {
+        NSRange colon = [path rangeOfString:@":" options:0
+            range:NSMakeRange(br.location, path.length - br.location)];
+        if (colon.location != NSNotFound) {
+            NSRange close = [path rangeOfString:@"]" options:0
+                range:NSMakeRange(colon.location, path.length - colon.location)];
+            if (close.location != NSNotFound) { return YES; }
+        }
+    }
+    return NO;
 }
 
 - (NSString *)historyCommand {

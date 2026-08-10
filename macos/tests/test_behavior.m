@@ -288,6 +288,35 @@ static void test_search_engine_uses_engine(void) {
     TEST_ASSERT_EQ_STR([c searchEngineMainPage], @"https://search.example.com/");
 }
 
+// TDD: port vb_load_uri + is_plausible_uri decision logic into loadURI:.
+// These cases mirror src/main.c:424 is_plausible_uri / vb_load_uri:
+//   - contains "://" (no space) or "about:" -> direct
+//   - real file path -> file:// (covered separately)
+//   - NOT plausible (space, no dot, not localhost, not IPv6) -> search/shortcut
+//   - plausible (dot/localhost/IPv6) -> http://
+static void test_loaduri_decision(void) {
+    VimbConfig *c = [[VimbConfig alloc] init];
+    [c addShortcut:@"dd" uri:@"https://duckduckgo.com/?q=$0"];
+    [c setDefaultShortcutKey:@"dd"];
+
+    // Direct URLs.
+    TEST_ASSERT_EQ_STR([c loadURI:@"https://example.com/x"], @"https://example.com/x");
+    TEST_ASSERT_EQ_STR([c loadURI:@"about:blank"], @"about:blank");
+
+    // Plausible URL (contains a dot) -> http:// fallback.
+    TEST_ASSERT_EQ_STR([c loadURI:@"example.com"], @"http://example.com");
+
+    // localhost is plausible.
+    TEST_ASSERT_EQ_STR([c loadURI:@"localhost"], @"http://localhost");
+
+    // Not plausible -> search via default shortcut.
+    TEST_ASSERT_EQ_STR([c loadURI:@"something"],
+                       @"https://duckduckgo.com/?q=something");
+    // Space -> search.
+    TEST_ASSERT_EQ_STR([c loadURI:@"hello world"],
+                       @"https://duckduckgo.com/?q=hello%20world");
+}
+
 #pragma mark - VimbConfig coverage
 
 static void test_config_get_and_source_content(void) {
@@ -1013,6 +1042,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_shortcut_remove);
     RUN_TEST(test_shortcut_no_placeholder_template);
     RUN_TEST(test_search_engine_uses_engine);
+    RUN_TEST(test_loaduri_decision);
 
     RUN_TEST(test_config_get_and_source_content);
     RUN_TEST(test_config_convert_edge_cases);

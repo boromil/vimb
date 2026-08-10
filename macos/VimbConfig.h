@@ -81,6 +81,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)searchEngineMainPage;
 // Search URL for a query using the default engine (full vimb shortcut engine).
 - (NSString *)searchURLForQuery:(NSString *)query;
+// Decide what to load for an open input (port of src/main.c vb_load_uri):
+// returns the direct URL, a search/shortcut URL, or an http:// fallback.
+- (NSString *)loadURI:(NSString *)input;
 - (NSString *)historyCommand;   // config file path (rc)
 - (void)sourceConfigFile;
 // Process an in-memory source/config file body (line splitting + notification

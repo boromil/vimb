@@ -286,31 +286,14 @@ static const CGFloat kStatusHeight = 24.0;
     [self updateStatus];
 }
 
+// Decide the URL to load, routing non-URL input through the search/shortcut
+// engine (port of vb_load_uri). "https://example.com" loads direct; a bare
+// "example.com" becomes http://example.com; a search query like "foo bar" or
+// a single non-URL word is searched via the selected engine.
 - (NSURL *)normalizeURL:(NSString *)input {
-    NSString *s = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    s = [s stringByReplacingOccurrencesOfString:@"\\ " withString:@" "];
-    if (s.length == 0) { return [NSURL URLWithString:@"about:blank"]; }
-    NSRange r = [s rangeOfString:@"://"];
-    if (r.location == NSNotFound && ![s hasPrefix:@"about:"] && ![s hasPrefix:@"file:"]) {
-        BOOL hasSpace = [s rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]].location != NSNotFound;
-        if (hasSpace) {
-            // Treat as a search query using the default search engine.
-            NSURL *u = [NSURL URLWithString:[[VimbConfig shared] searchURLForQuery:s]];
-            return u ?: [NSURL URLWithString:@"about:blank"];
-        }
-        if (![s containsString:@"."]) {
-            // Likely a host without dot; still try loading.
-            s = [@"https://" stringByAppendingString:s];
-        }
-        NSURL *u = [NSURL URLWithString:s];
-        if (u && u.scheme.length == 0) {
-            s = [@"https://" stringByAppendingString:s];
-            u = [NSURL URLWithString:s];
-        }
-        return u ?: [NSURL URLWithString:@"about:blank"];
-    }
-    NSURL *url = [NSURL URLWithString:s];
-    return url ?: [NSURL URLWithString:@"about:blank"];
+    NSString *uri = [[VimbConfig shared] loadURI:input ?: @""];
+    NSURL *u = [NSURL URLWithString:uri];
+    return u ?: [NSURL URLWithString:@"about:blank"];
 }
 
 #pragma mark - Vim action helpers

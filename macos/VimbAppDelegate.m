@@ -58,7 +58,9 @@
         url = [defaults stringForKey:@"startpage"];
     }
     if (url == nil || url.length == 0) {
-        url = @"about:blank";
+        // Default opened page = the search engine's main page (home-page).
+        NSString *home = [VimbConfig shared].settings[@"home-page"];
+        url = ([home isKindOfClass:[NSString class]] && home.length) ? home : @"about:blank";
     }
     [self openNewWindowWithURL:url];
 }
