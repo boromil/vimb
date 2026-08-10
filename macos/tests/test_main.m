@@ -68,8 +68,11 @@ typedef NS_ENUM(NSInteger, ScrollMode) { ScrollModeNone = 0, ScrollModeScroll };
 - (void)vimNewTab {}
 - (void)vimCloseTab {}
 - (void)vimToggleHints {}
-- (void)vimEnterHints:(NSString *)mode {}
+- (void)vimEnterHints:(NSString *)mode gmode:(BOOL)gmode {}
 - (void)vimHintKey:(NSString *)key {}
+- (void)vimHintFocus:(BOOL)back {}
+- (void)vimHintBackspace {}
+- (void)vimHintFire {}
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error {}
 - (void)vimFocusWebView {}
 - (void)vimEnterPassThrough {}

@@ -1,5 +1,6 @@
 #import "VimController.h"
 #import "VimbConfig.h"
+#import "VimbHintEngine.h"
 #import <ctype.h>
 #import <string.h>
 
@@ -134,9 +135,20 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         if (c == 27) {                       // ESC cancels
             [d vimToggleHints];
             [self reset];
-        } else if (c == '\t') {
-            [d vimToggleHints];
-            [self reset];
+        } else if (c == '\t') {              // Tab / Shift-Tab move focus next/prev
+            BOOL shift = (mods & (1UL << 17)) != 0;   // NSEventModifierFlagShift = 1 << 17
+            [d vimHintFocus:shift];          // back=shift
+        } else if (c == 0x7f || c == 0x08) { // Backspace removes last filter key
+            [d vimHintBackspace];
+        } else if (c == '\r' || c == '\n') { // Enter fires the focused hint
+            [d vimHintFire];
+        } else if (c == 0x04 || c == 0x06 || c == 0x02 || c == 0x15 ||
+                   (ctrl && isalpha(c) && strchr("dfbu", c | 0x20) != NULL)) {
+            // Ctrl-D/F/B/U still scroll (passthrough to vim scroll). Handle
+            // both the raw control char and the ctrl+letter form.
+            unichar cc = c;
+            if (isalpha(c)) { cc = (unichar)((c >= 'a' && c <= 'z') ? (c - 'a' + 1) : (c - 'A' + 1)); }
+            [d vimScrollMode:cc count:(NSUInteger)1];
         } else if (isprint(c) || c == ' ') {
             [d vimHintKey:[[NSString alloc] initWithCharacters:&c length:1]];
         }
@@ -461,7 +473,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
             // f: follow (current tab), F: follow in a new tab.
             self.mode = VimModeHint;
             [d vimOpenPrompt:@"" mode:VimModeHint];
-            [d vimEnterHints:(c == 'F') ? @"t" : @"o"];
+            [d vimEnterHints:(c == 'F') ? @"t" : @"o" gmode:NO];
         } else if (c == '/' || c == '?') {
             self.mode = VimModeSearch;
             self.promptForMode = (c == '/') ? @"forward" : @"backward";
@@ -473,11 +485,17 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"hint"]) {
-        // ';' + follow key (key2) chooses the hint action.
-        NSString *hintMode = [NSString stringWithFormat:@"%c", k2 ? k2 : 'o'];
+        // ';' + mode char (key2) chooses the hint action. Mirrors
+        // hints_parse_prompt: an invalid mode simply clears any hint state.
+        unichar hm = k2 ? k2 : 'o';
+        if (![VimbHintEngine validMode:hm gmode:NO]) {
+            [d vimToggleHints];
+            [self reset];
+            return HBResultComplete;
+        }
         self.mode = VimModeHint;
         [d vimOpenPrompt:@"" mode:VimModeHint];
-        [d vimEnterHints:hintMode];
+        [d vimEnterHints:[NSString stringWithFormat:@"%c", hm] gmode:NO];
         return HBResultComplete;
     }
     if ([name isEqualToString:@"inputopen"]) {
@@ -564,7 +582,15 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
             [d vimGoHomeURL];
             return HBResultComplete;
         case ';': {
-            [d vimToggleHints];
+            // "g;X" g-mode hinting: keep the hints open (repeatable).
+            unichar hm = k3 ? k3 : 'o';
+            if (![VimbHintEngine validMode:hm gmode:YES]) {
+                [d vimToggleHints];
+                return HBResultComplete;
+            }
+            self.mode = VimModeHint;
+            [d vimOpenPrompt:@"" mode:VimModeHint];
+            [d vimEnterHints:[NSString stringWithFormat:@"%c", hm] gmode:YES];
             return HBResultComplete;
         }
         default:

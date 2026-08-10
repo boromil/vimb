@@ -12,6 +12,7 @@
 #import "VimbEngine.h"
 #import "VimbAutocmd.h"
 #import "VimbHandler.h"
+#import "VimbHintEngine.h"
 
 #pragma mark - Shared spies
 
@@ -50,8 +51,11 @@ static NSString *S(unichar c) {
 - (void)vimNewTab { [self record:@"newtab"]; }
 - (void)vimCloseTab { [self record:@"closetab"]; }
 - (void)vimToggleHints { [self record:@"toggleshints"]; }
-- (void)vimEnterHints:(NSString *)mode { [self record:[NSString stringWithFormat:@"enterhints:%@", mode]]; }
+- (void)vimEnterHints:(NSString *)mode gmode:(BOOL)gmode { [self record:[NSString stringWithFormat:@"enterhints:%@:%d", mode, gmode]]; }
 - (void)vimHintKey:(NSString *)key { [self record:[NSString stringWithFormat:@"hintkey:%@", key]]; }
+- (void)vimHintFocus:(BOOL)back { [self record:[NSString stringWithFormat:@"hintfocus:%d", back]]; }
+- (void)vimHintBackspace { [self record:@"hintbs"]; }
+- (void)vimHintFire { [self record:@"hintfire"]; }
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error { [self record:[NSString stringWithFormat:@"msg:%d:%@", error, message]]; }
 - (void)vimFocusWebView { [self record:@"focusweb"]; }
 - (void)vimEnterPassThrough { [self record:@"passthrough"]; }
@@ -775,18 +779,18 @@ static void test_controller_cmdline_and_input_open(void) {
     [spy.calls removeAllObjects];
     vc = newVc(spy); feed(vc, @"f");
     TEST_ASSERT_EQ_I(vc.mode, VimModeHint);
-    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:o"]);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:o:0"]);
     vc = newVc(spy); feed(vc, @"F");
-    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:t"]);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:t:0"]);
 
     // ';' + follow key -> hint mode.
     [spy.calls removeAllObjects];
     vc = newVc(spy); feed(vc, @";"); feed(vc, @"y");
-    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:y"]);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:y:0"]);
     // ';o' -> default 'o' follow.
     [spy.calls removeAllObjects];
     vc = newVc(spy); feed(vc, @";"); feed(vc, @"o");
-    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:o"]);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:o:0"]);
 
     // o / O / t / T -> inputopen.
     [spy.calls removeAllObjects];
@@ -893,15 +897,52 @@ static void test_controller_hint_mode_keys(void) {
     vc = newVc(spy); feed(vc, @";"); feed(vc, @"o"); feed(vc, @"\x1b");
     TEST_ASSERT_TRUE([spy.calls containsObject:@"toggleshints"]);
 
-    // Tab in hint mode cancels too.
+    // Tab / Shift-Tab move hint focus (forward / back), not cancel.
     [spy.calls removeAllObjects];
-    vc = newVc(spy); feed(vc, @";"); feed(vc, @"o"); feed(vc, @"\t");
-    TEST_ASSERT_TRUE([spy.calls containsObject:@"toggleshints"]);
+    vc = newVc(spy); feed(vc, @";"); feed(vc, @"o");
+    [vc handleKeyCode:0 modifiers:0 characters:S('\t')];
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"hintfocus:0"]);
+    [spy.calls removeAllObjects];
+    vc = newVc(spy); feed(vc, @";"); feed(vc, @"o");
+    [vc handleKeyCode:0 modifiers:(1UL << 17) characters:S('\t')];
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"hintfocus:1"]);
+
+    // Backspace removes the last filter key.
+    [spy.calls removeAllObjects];
+    vc = newVc(spy); feed(vc, @";"); feed(vc, @"o");
+    [vc handleKeyCode:0 modifiers:0 characters:[[NSString alloc] initWithCharacters:(unichar[]){0x7f} length:1]];
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"hintbs"]);
+
+    // Enter fires the focused hint.
+    [spy.calls removeAllObjects];
+    vc = newVc(spy); feed(vc, @";"); feed(vc, @"o"); feed(vc, @"\r");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"hintfire"]);
 
     // Empty chars in hint mode -> consumed (returns YES), no call.
     [spy.calls removeAllObjects];
     vc = newVc(spy); feed(vc, @";"); feed(vc, @"o");
     TEST_ASSERT_TRUE([vc handleKeyCode:0 modifiers:0 characters:@""]);
+
+    // g;o enters g-mode hinting (keep-open).
+    [spy.calls removeAllObjects];
+    vc = newVc(spy); feed(vc, @"g"); feed(vc, @";"); feed(vc, @"o");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:o:1"]);
+
+    // ;e / ;k / ;i / ;s / ;t / ;y / ;O / ;T / ;P all map to their mode char.
+    [spy.calls removeAllObjects];
+    NSSet<NSString *> *modes = [NSSet setWithArray:@[@"e",@"i",@"I",@"k",@"o",@"p",@"P",@"s",@"t",@"T",@"x",@"y",@"Y"]];
+    for (NSString *m in modes) {
+        [spy.calls removeAllObjects];
+        vc = newVc(spy); feed(vc, @";"); feed(vc, m);
+        NSString *expect = [NSString stringWithFormat:@"enterhints:%@:0", m];
+        TEST_ASSERT_TRUE([spy.calls containsObject:expect]);
+    }
+
+    // Invalid mode char clears hint state (e.g. ";w" is not a valid mode).
+    [spy.calls removeAllObjects];
+    vc = newVc(spy); feed(vc, @";"); feed(vc, @"w");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"toggleshints"]);
+    TEST_ASSERT_EQ_I(vc.mode, VimModeNormal);
 }
 
 static void test_controller_commandline_committed_search(void) {
@@ -1099,6 +1140,84 @@ static void test_controller_ambiguous_and_register(void) {
     (void)spy;
 }
 
+static void test_hint_engine_parse_prompt(void) {
+    unichar mode = 0; BOOL gmode = NO;
+    // ";X" normal-mode prompts.
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@";o" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_EQ_I(mode, 'o'); TEST_ASSERT_EQ_I(gmode, 0);
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@";t" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_EQ_I(mode, 't'); TEST_ASSERT_EQ_I(gmode, 0);
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@";e" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_EQ_I(mode, 'e');
+    // "g;X" g-mode prompts.
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@"g;I" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_EQ_I(mode, 'I'); TEST_ASSERT_EQ_I(gmode, 1);
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@"g;y" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_EQ_I(mode, 'y'); TEST_ASSERT_EQ_I(gmode, 1);
+    // gmodes are a subset of normal modes: o/p/P/s/t/y are kept, x/e/k/O/i are not.
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@"g;o" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@"g;Y" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@"g;x" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@"g;e" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@"g;p" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_TRUE([VimbHintEngine parseMode:@"g;P" mode:&mode isGmode:&gmode]);
+    // 'w' is not a hint mode at all.
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@"g;w" mode:&mode isGmode:&gmode]);
+    // Invalid prompts.
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@"" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@";Q" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@"g;Q" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@";" mode:&mode isGmode:&gmode]);
+    TEST_ASSERT_FALSE([VimbHintEngine parseMode:@"x;o" mode:&mode isGmode:&gmode]);
+    // validMode mirrors parse's allowed sets.
+    TEST_ASSERT_TRUE([VimbHintEngine validMode:'o' gmode:NO]);
+    TEST_ASSERT_TRUE([VimbHintEngine validMode:'e' gmode:NO]);
+    TEST_ASSERT_TRUE([VimbHintEngine validMode:'x' gmode:NO]);
+    TEST_ASSERT_FALSE([VimbHintEngine validMode:'x' gmode:YES]);
+    TEST_ASSERT_TRUE([VimbHintEngine validMode:'P' gmode:YES]);
+}
+
+static void test_hint_engine_actions_and_dispatch(void) {
+    // Action category per mode (port of hints.js actionmap).
+    TEST_ASSERT_EQ_I([VimbHintEngine actionForMode:'k'], VimbHintActionRemove);
+    TEST_ASSERT_EQ_I([VimbHintEngine actionForMode:'o'], VimbHintActionOpen);
+    TEST_ASSERT_EQ_I([VimbHintEngine actionForMode:'t'], VimbHintActionOpen);
+    TEST_ASSERT_EQ_I([VimbHintEngine actionForMode:'Y'], VimbHintActionYankText);
+    TEST_ASSERT_EQ_I([VimbHintEngine actionForMode:'y'], VimbHintActionData);
+    TEST_ASSERT_EQ_I([VimbHintEngine actionForMode:'i'], VimbHintActionData);
+
+    // handleForm covers e/o/t.
+    TEST_ASSERT_TRUE([VimbHintEngine handlesFormForMode:'e']);
+    TEST_ASSERT_TRUE([VimbHintEngine handlesFormForMode:'o']);
+    TEST_ASSERT_TRUE([VimbHintEngine handlesFormForMode:'t']);
+    TEST_ASSERT_FALSE([VimbHintEngine handlesFormForMode:'y']);
+    TEST_ASSERT_FALSE([VimbHintEngine handlesFormForMode:'k']);
+
+    // DATA dispatch (port of hint_function_check_result's switch).
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'i'], VimbHintDispatchOpen);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'I'], VimbHintDispatchOpen);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'O'], VimbHintDispatchCommandOpen);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'T'], VimbHintDispatchCommandOpen);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'s'], VimbHintDispatchSave);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'x'], VimbHintDispatchXHint);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'y'], VimbHintDispatchYank);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'Y'], VimbHintDispatchYank);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'p'], VimbHintDispatchQueue);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'P'], VimbHintDispatchQueue);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'k'], VimbHintDispatchRemove);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'e'], VimbHintDispatchInsert);
+    TEST_ASSERT_EQ_I([VimbHintEngine dispatchForDataMode:'q'], VimbHintDispatchNone);
+
+    // New-tab semantics.
+    TEST_ASSERT_TRUE([VimbHintEngine opensNewTab:'I']);
+    TEST_ASSERT_TRUE([VimbHintEngine opensNewTab:'t']);
+    TEST_ASSERT_FALSE([VimbHintEngine opensNewTab:'i']);
+    TEST_ASSERT_FALSE([VimbHintEngine opensNewTab:'o']);
+    // Command line prefix for O/T.
+    TEST_ASSERT_TRUE([[VimbHintEngine commandLinePrefixForMode:'O'] isEqualToString:@":open "]);
+    TEST_ASSERT_TRUE([[VimbHintEngine commandLinePrefixForMode:'T'] isEqualToString:@":tabopen "]);
+}
+
 #pragma mark - main
 
 // Entry point invoked from test_main.m's main(). Returns 0 on success.
@@ -1149,6 +1268,8 @@ int run_behavior_main(void) {
     RUN_TEST(test_controller_gcmd);
     RUN_TEST(test_controller_prevnext_and_scroll_keys);
     RUN_TEST(test_controller_hint_mode_keys);
+    RUN_TEST(test_hint_engine_parse_prompt);
+    RUN_TEST(test_hint_engine_actions_and_dispatch);
     RUN_TEST(test_controller_commandline_committed_search);
     RUN_TEST(test_controller_pass_and_esc);
     RUN_TEST(test_controller_remap_recursion);

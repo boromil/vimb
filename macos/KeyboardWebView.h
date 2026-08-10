@@ -20,9 +20,15 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithFrame:(NSRect)frame;
 // call the hint-toggle JS
 - (void)toggleHints;
-- (void)toggleHints:(nullable NSString *)followMode;   // followMode: "f","t","o","y","i"...
+- (void)toggleHints:(nullable NSString *)followMode;   // followMode: a full hint mode char ("o","t","y","i","e","k","s","x","p",...)
+- (void)toggleHints:(nullable NSString *)followMode gmode:(BOOL)gmode;   // g-mode (keep-open) hinting
 - (void)sendHintKey:(NSString *)key;
 - (void)sendHintKey:(nullable NSString *)key mode:(nullable NSString *)followMode;
+// Hint-mode editing controls (Esc/Enter/Tab/Backspace) forwarded to the JS.
+- (void)hintClear;
+- (void)hintFocus:(BOOL)back;
+- (void)hintBackspace;
+- (void)hintFire;
 - (void)findString:(NSString *)query forwardDirection:(BOOL)forward;
 - (void)executeCommand:(NSString *)line;
 - (void)scrollToTop;

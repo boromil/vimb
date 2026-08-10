@@ -4,6 +4,7 @@
 #import "VimbEx.h"
 #import "VimbConfig.h"
 #import "VimbEngine.h"
+#import "VimbHintEngine.h"
 #import "VimbCommandField.h"
 #import "VimbWindow.h"
 
@@ -30,6 +31,7 @@ static const CGFloat kStatusHeight = 24.0;
 @property(nonatomic, strong) NSTextField *statusField;
 @property(nonatomic, strong) NSView *currentWebviewHolder;
 @property(nonatomic, copy, nullable) NSString *commandPrefix;
+@property(nonatomic, assign) BOOL currentHintGmode;   // whether the active hint run is g-mode (keep-open)
 @end
 
 @implementation BrowserWindowController
@@ -566,6 +568,16 @@ static const CGFloat kStatusHeight = 24.0;
         [self showMessage:@"nothing to save" error:YES];
         return;
     }
+    [self saveURI:uri path:path];
+}
+
+// Downloads `uri` to the given destination (or a derived name in download-path)
+// and reports the result. Shared by :save and the 's' hint mode.
+- (void)saveURI:(NSString *)uri path:(NSString *)path {
+    if (uri.length == 0 || [uri isEqualToString:@"about:blank"]) {
+        [self showMessage:@"nothing to save" error:YES];
+        return;
+    }
     NSString *destDir = [[VimbConfig shared] getString:@"download-path"
                                          defaultValue:NSHomeDirectory()];
     NSString *dest = path;
@@ -804,19 +816,21 @@ static const CGFloat kStatusHeight = 24.0;
         [self showMessage:payload[@"s"] ?: @"Page load error" error:YES];
     } else if ([t isEqualToString:@"download-done"]) {
         [self showMessage:@"Download finished" error:NO];
+    } else if ([t isEqualToString:@"hintdata"]) {
+        [self handleHintData:payload];
     } else if ([t isEqualToString:@"hintyank"]) {
+        // Kept for compatibility with older hint scripts; routed identically to
+        // a data-mode yank (into ';' then the default register).
         NSString *url = payload[@"url"] ?: @"";
-        NSPasteboard *pb = [NSPasteboard generalPasteboard];
-        [pb clearContents];
-        [pb setString:url forType:NSPasteboardTypeString];
-        [self.registers set:url forKey:'"'];
-        [self showMessage:[NSString stringWithFormat:@"yanked %@", url] error:NO];
+        [self yankPromptValue:url];
+        [self exitHintMode];
     } else if ([t isEqualToString:@"hintopen"]) {
         NSString *url = payload[@"url"] ?: @"";
         if (url.length) {
             [self loadURL:url inNewTab:YES];
             [self showMessage:[NSString stringWithFormat:@"opened in new tab %@", url] error:NO];
         }
+        [self exitHintMode];
     }
 }
 
@@ -827,6 +841,120 @@ static const CGFloat kStatusHeight = 24.0;
         if (t.webView == view) { return t; }
     }
     return nil;
+}
+
+#pragma mark - Hint actions
+
+// Handles the unified {t:'hintdata', mode, value, action} message produced by
+// the hint overlay. This is the native port of hint_function_check_result's
+// "DATA:"/"DONE:"/"INSERT:" handling.
+- (void)handleHintData:(NSDictionary *)payload {
+    NSString *modeStr = payload[@"mode"] ?: @"";
+    NSString *value = payload[@"value"] ?: @"";
+    NSString *action = payload[@"action"] ?: @"DATA";
+    unichar mode = modeStr.length ? [modeStr characterAtIndex:0] : 0;
+    BOOL gmode = self.currentHintGmode;
+    VimbHintDispatch dispatch = VimbHintDispatchNone;
+
+    if ([action isEqualToString:@"DATA"]) {
+        // Put the hinted value into the ';' register first (port of
+        // vb_register_add(c, ';', v) in hint_function_check_result).
+        [self.registers set:value forKey:';'];
+        dispatch = [VimbHintEngine dispatchForDataMode:mode];
+        switch (dispatch) {
+            case VimbHintDispatchOpen: {
+                // i/I: open the image url (I -> new tab).
+                BOOL newTab = [VimbHintEngine opensNewTab:mode];
+                [self loadURL:value inNewTab:newTab];
+                if (!newTab) { [self recordHistory:value]; }
+                [self showMessage:[NSString stringWithFormat:@"open %@%@", newTab ? @"in new tab " : @"", value] error:NO];
+                break;
+            }
+            case VimbHintDispatchCommandOpen: {
+                // O/T: prefill the command line (":open <url>" / ":tabopen <url>").
+                NSString *prefix = (mode == 'T') ? @"tabopen " : @"open ";
+                NSString *prompt = [NSString stringWithFormat:@"%@%@", prefix, value];
+                if (gmode) {
+                    // g-mode echoes but stays hinting (mirrors vb_echo without
+                    // entering command mode).
+                    [self showMessage:prompt error:NO];
+                } else {
+                    self.vim.mode = VimModeCommand;
+                    [self vimOpenPrompt:prompt mode:VimModeCommand];
+                }
+                break;
+            }
+            case VimbHintDispatchSave:
+                [self saveURI:value path:nil];
+                break;
+            case VimbHintDispatchXHint:
+                [self runXHintCommandWithValue:value];
+                break;
+            case VimbHintDispatchYank:
+                [self yankPromptValue:value];
+                break;
+            case VimbHintDispatchQueue: {
+                // p/P: push/unshift onto the read-later queue. vimb's storage
+                // only keeps front/front ordering, so both use prepend (the
+                // unshift distinction is preserved for the caller).
+                BOOL unshift = (mode == 'P');
+                [[VimbConfig shared].queueStore prepend:value max:NSUIntegerMax];
+                [self showMessage:[NSString stringWithFormat:@"queued %@", value] error:NO];
+                (void)unshift;
+                break;
+            }
+            case VimbHintDispatchRemove:   // k: element already removed by the script
+            case VimbHintDispatchInsert:   // e with INSERT handled below
+            case VimbHintDispatchNone:
+            default:
+                break;
+        }
+    } else if ([action isEqualToString:@"INSERT"]) {
+        // The script focused a form field. For 'e' we can also seed the ';'
+        // register with the field value (best-effort editor support).
+        if (mode == 'e') {
+            [self.registers set:value forKey:';'];
+        }
+    }
+
+    // Leave hint mode unless g-mode keeps it open, or we transitioned into
+    // command mode to edit a prefilled open prompt (O/T, non-g-mode).
+    BOOL toCommand = ([action isEqualToString:@"DATA"] && dispatch == VimbHintDispatchCommandOpen && !gmode);
+    if (!gmode && !toCommand) {
+        [self exitHintMode];
+    }
+    // gmode (or toCommand) intentionally keeps hint/command mode active.
+}
+
+// Runs the x-hint-command setting with <C-R>; replaced by the hinted value
+// (port of map_handle_string(c, GET_CHAR("x-hint-command"), true) — the value
+// is already in the ';' register).
+- (void)runXHintCommandWithValue:(NSString *)value {
+    NSString *tmpl = [[VimbConfig shared] getString:@"x-hint-command" defaultValue:@":o <C-R>;"] ?: @":o <C-R>;";
+    NSString *line = [tmpl stringByReplacingOccurrencesOfString:@"<C-R>;" withString:value ?: @""];
+    line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if ([line hasPrefix:@":"]) { line = [line substringFromIndex:1]; }
+    if (line.length) { [self.exEngine runCommand:line]; }
+}
+
+// Puts `value` into the default register, the pasteboard and the ';' register
+// (mirrors the 'y'/'Y' hint action's command_yank into the current register).
+- (void)yankPromptValue:(NSString *)value {
+    [self.registers set:value forKey:';'];
+    [self.registers set:value forKey:'"'];
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb setString:value forType:NSPasteboardTypeString];
+    [self showMessage:[NSString stringWithFormat:@"yanked %@", value] error:NO];
+}
+
+// Exits hint mode: resets the vim engine to normal and returns focus to the
+// webview. The overlay is already torn down by the script for non-g-mode, but
+// we clear defensively so the hint state can never stay resident.
+- (void)exitHintMode {
+    [self.vim reset];
+    [self.activeTab.webView toggleHints:nil];
+    if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
 }
 
 - (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode {
@@ -1083,8 +1211,14 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)vimNewTab { [self newTabInWindow]; }
 - (void)vimCloseTab { [self closeActiveTab]; }
 - (void)vimToggleHints { [self.activeTab.webView toggleHints]; }
-- (void)vimEnterHints:(NSString *)mode { [self.activeTab.webView toggleHints:mode]; }
+- (void)vimEnterHints:(NSString *)mode gmode:(BOOL)gmode {
+    self.currentHintGmode = gmode;
+    [self.activeTab.webView toggleHints:mode gmode:gmode];
+}
 - (void)vimHintKey:(NSString *)key { [self.activeTab.webView sendHintKey:key]; }
+- (void)vimHintFocus:(BOOL)back { [self.activeTab.webView hintFocus:back]; }
+- (void)vimHintBackspace { [self.activeTab.webView hintBackspace]; }
+- (void)vimHintFire { [self.activeTab.webView hintFire]; }
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error { [self showMessage:message error:error]; }
 - (void)vimFocusWebView {
     if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
