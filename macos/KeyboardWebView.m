@@ -61,6 +61,7 @@ static NSString *const GVimJS =
 @implementation KeyboardWebView {
     NSString *_lastQuery;
     BOOL _editableFocusActive;
+    double _pendingMarkY;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -161,6 +162,10 @@ static NSString *const GVimJS =
 #pragma mark - Navigation
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)nav {
+    if (_pendingMarkY != 0) {
+        [self scrollToY:_pendingMarkY];
+        _pendingMarkY = 0;
+    }
     id<KeyboardWebViewDelegate> d = self.vbDelegate;
     if (d && [d respondsToSelector:@selector(webView:didFinishLoadWithURL:)]) {
         [d webView:self didFinishLoadWithURL:self.URL];
@@ -370,6 +375,36 @@ static NSString *const GVimJS =
 - (void)focusFirstInput {
     [self evaluateJavaScript:@"(function(){var e=document.querySelector('input,textarea,[contenteditable=true]');"
         @"if(e)e.focus();})()" completionHandler:nil];
+}
+
+- (void)getScrollTopWithCompletion:(void (^)(double top))completion {
+    [self evaluateJavaScript:@"(window.__vimScrollTop!=null?window.__vimScrollTop:(document.scrollingElement||document.documentElement).scrollTop||0)"
+           completionHandler:^(id result, NSError *error) {
+        double top = 0;
+        if (!error && result && ![result isKindOfClass:[NSNull class]]) {
+            top = [result doubleValue];
+        }
+        if (completion) { completion(top); }
+    }];
+}
+
+- (void)scrollToY:(double)y {
+    NSString *js = [NSString stringWithFormat:@"(function(){var e=document.scrollingElement||document.documentElement;"
+        @"e.scrollTop=%f;window.scrollTo(0,%f);window.__vimScrollTop=%f;})()", y, y, y];
+    [self evaluateJavaScript:js completionHandler:nil];
+}
+
+- (void)jumpToURI:(NSString *)uri withY:(double)y {
+    NSURL *url = [NSURL URLWithString:uri];
+    if (!url) { return; }
+    __weak typeof(self) weakSelf = self;
+    [self evaluateJavaScript:@"(function(){"  // no-op; load happens natively
+        @"})()" completionHandler:^(id result, NSError *err) {
+        (void)result; (void)err;
+        [weakSelf loadRequest:[NSURLRequest requestWithURL:url]];
+    }];
+    // Remember the y to restore after load via a stored pending scroll.
+    _pendingMarkY = y;
 }
 
 - (void)findString:(NSString *)query forwardDirection:(BOOL)forward {

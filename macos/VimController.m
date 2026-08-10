@@ -332,7 +332,14 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"mark"]) {
-        [self showUnsupported:@"mark" d:d];
+        // m<char> sets a mark, '<char> jumps to it (vimb normal_mark).
+        if (k2) {
+            if (c == 'm') {
+                [d vimSetMark:k2];
+            } else {
+                [d vimJumpMark:k2];
+            }
+        }
         return HBResultComplete;
     }
     if ([name isEqualToString:@"cmdline"]) {

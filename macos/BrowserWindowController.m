@@ -15,6 +15,7 @@ static const CGFloat kStatusHeight = 24.0;
 @property(nonatomic, strong) NSMutableArray<NSString *> *completionCycle;
 @property(nonatomic, copy) NSString *completionPrefixLine;
 @property(nonatomic, assign) NSInteger completionIndex;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *pendingMarkY;
 @property(nonatomic, strong) NSMutableArray<VimbTab *> *tabs;
 @property(nonatomic, weak) VimbTab *activeTab;
 
@@ -50,6 +51,7 @@ static const CGFloat kStatusHeight = 24.0;
         _registers = [[VimbRegisters alloc] init];
         _marks = [[VimbMarks alloc] init];
         _completionCycle = [NSMutableArray array];
+        _pendingMarkY = [NSMutableDictionary dictionary];
         _tabs = [NSMutableArray array];
         _tabButtons = [NSMutableArray array];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(vimbRunCommand:)
@@ -728,6 +730,40 @@ static const CGFloat kStatusHeight = 24.0;
     [pb clearContents];
     [pb setString:url forType:NSPasteboardTypeString];
     [self showMessage:[NSString stringWithFormat:@"yanked %@", url] error:NO];
+}
+
+- (void)vimSetMark:(unichar)c {
+    VimbMarks *marks = self.marks;
+    KeyboardWebView *wv = self.activeTab.webView;
+    NSString *curUri = self.activeTab.url.absoluteString ?: wv.URL.absoluteString ?: @"";
+    NSString *key = [NSString stringWithCharacters:&c length:1];
+    if (isupper(c)) {
+        [wv getScrollTopWithCompletion:^(double top) {
+            [marks setGlobal:c uri:curUri];
+            self.pendingMarkY[key] = @(top);
+            [self showMessage:[NSString stringWithFormat:@"mark %@: %@", key, curUri] error:NO];
+        }];
+    } else {
+        [wv getScrollTopWithCompletion:^(double top) {
+            [marks setLocal:c top:top];
+            [self showMessage:[NSString stringWithFormat:@"mark %@ set at y=%.0f", key, top] error:NO];
+        }];
+    }
+}
+
+- (void)vimJumpMark:(unichar)c {
+    VimbMarks *marks = self.marks;
+    KeyboardWebView *wv = self.activeTab.webView;
+    BOOL isGlobal = isupper(c);
+    if (isGlobal) {
+        NSString *uri = [marks getGlobal:c];
+        if (!uri) { [self showMessage:@"mark not set" error:NO]; return; }
+        NSNumber *pos = self.pendingMarkY[[NSString stringWithCharacters:&c length:1]];
+        [wv jumpToURI:uri withY:pos ? pos.doubleValue : 0];
+    } else {
+        double top = [marks getLocal:c];
+        [wv scrollToY:top];
+    }
 }
 - (void)vimZoom:(BOOL)in {
     CGFloat f = self.activeTab.webView.magnification;
