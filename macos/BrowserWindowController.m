@@ -560,7 +560,12 @@ static const CGFloat kStatusHeight = 24.0;
         return;
     }
     self.commandPrefix = prompt;
-    self.commandField.stringValue = @"";
+    if ([prompt hasPrefix:@"open "] || [prompt hasPrefix:@"tabopen "]) {
+        // o/t prefills the command line with the open prefix.
+        self.commandField.stringValue = prompt;
+    } else {
+        self.commandField.stringValue = @"";
+    }
     self.commandField.placeholderString = [prompt isEqualToString:@":"] ? @"command" : @"search";
     self.commandField.hidden = NO;
     [self.window makeFirstResponder:self.commandField];

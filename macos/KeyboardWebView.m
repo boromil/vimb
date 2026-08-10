@@ -13,14 +13,36 @@ static NSString *const GVimJS =
      "      window.webkit.messageHandlers.vimb.postMessage(msg);"
      "    }"
      "  }"
-     "  function scrollElement(el){"
-     "    var n = el, depth = 0;"
-     "    for (;n && depth < 40; n=n.parentElement, depth++){"
-     "      if (n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1){ return n; }"
-     "    }"
-     "    return null;"
-     "  }"
-     "  return {"
+      "  function scrollElement(el){"
+      "    var n = el, depth = 0;"
+      "    for (;n && depth < 40; n=n.parentElement, depth++){"
+      "      if (n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1){ return n; }"
+      "    }"
+      "    return null;"
+      "  }"
+      "  function isEditable(t){"
+      "    var n=t, d=0;"
+      "    if(!n||!n.tagName)return false;"
+      "    var tag=(n.tagName||'').toLowerCase();"
+      "    if(tag==='textarea'||tag==='input'&&['text','search','url','password','email','tel','number'].indexOf((n.type||'').toLowerCase())>-1)return true;"
+      "    if(tag==='input'||tag==='select')return false;"
+      "    for(;n&&d<4;n=n.parentElement,d++){"
+      "      if(n.isContentEditable||(n.getAttribute&&n.getAttribute('contenteditable')==='true'))return true;"
+      "    }"
+      "    return false;"
+      "  }"
+      "  window.__vb_editable=function(){ return isEditable(document.activeElement); };"
+      "  var lastFocused;"
+      "  document.addEventListener('focusin',function(e){"
+      "    var el=e.target;"
+      "    if(isEditable(el)){ window.__vb_editable_active=1; post({t:'focusactive'}); }"
+      "    else { window.__vb_editable_active=0; }"
+      "    lastFocused=el;"
+      "  },true);"
+      "  document.addEventListener('focusout',function(e){"
+      "    if(isEditable(e.target)){ window.__vb_editable_active=0; }"
+      "  },true);"
+      "  return {"
      "    scrollToTop:function(){ var s = scrollElement(document.scrollingElement || document.documentElement);"
      "        var e = document.scrollingElement || document.documentElement;"
      "        e.scrollTop = 0; window.scrollTo(0,0); post({t:'scrollTop'}); },"
@@ -38,6 +60,7 @@ static NSString *const GVimJS =
 
 @implementation KeyboardWebView {
     NSString *_lastQuery;
+    BOOL _editableFocusActive;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -86,6 +109,19 @@ static NSString *const GVimJS =
 
 - (void)keyDown:(NSEvent *)event {
     VimController *vim = [self.vbDelegate vimControllerForView:self];
+    if (_editableFocusActive) {
+        // A text input is focused: allow typing to reach the page. ESC blurs
+        // the field and returns to vim normal mode.
+        NSString *cs = event.charactersIgnoringModifiers;
+        if (cs.length && [cs characterAtIndex:0] == 27) {
+            [self evaluateJavaScript:@"document.activeElement&&document.activeElement.blur?document.activeElement.blur():0;"
+                      completionHandler:nil];
+            _editableFocusActive = NO;
+            return;
+        }
+        [super keyDown:event];
+        return;
+    }
     if (vim && [vim handleKeyDown:event inWebView:YES]) {
         return; // consumed by vim
     }
@@ -145,10 +181,18 @@ static NSString *const GVimJS =
 - (void)userContentController:(WKUserContentController *)uc
       didReceiveScriptMessage:(WKScriptMessage *)message {
     if (![message.name isEqualToString:@"vimb"]) { return; }
-    id<KeyboardWebViewDelegate> d = self.vbDelegate;
-    if (d && [d respondsToSelector:@selector(webView:didReceiveMessage:)]) {
-        if ([message.body isKindOfClass:[NSDictionary class]]) {
-            [d webView:self didReceiveMessage:(NSDictionary *)message.body];
+    if ([message.body isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *body = (NSDictionary *)message.body;
+        // Track text-input focus so keys pass through to the page.
+        if ([body[@"t"] isEqualToString:@"focusactive"]) {
+            _editableFocusActive = YES;
+        }
+        if ([body[@"t"] isEqualToString:@"focusclear"]) {
+            _editableFocusActive = NO;
+        }
+        id<KeyboardWebViewDelegate> d = self.vbDelegate;
+        if (d && [d respondsToSelector:@selector(webView:didReceiveMessage:)]) {
+            [d webView:self didReceiveMessage:body];
         }
     }
 }
