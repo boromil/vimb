@@ -15,7 +15,13 @@ static const NSString *COOKIE_ACCEPT = @"ask";
 + (instancetype)shared {
     static VimbConfig *instance;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ instance = [[VimbConfig alloc] init]; });
+    dispatch_once(&once, ^{
+        instance = [[VimbConfig alloc] init];
+        // Load the default settings/shortcuts/mappings once, so the running
+        // app (not just tests) has a populated registry (home-page, scroll
+        // step, search engine, etc.).
+        [instance loadDefaults];
+    });
     return instance;
 }
 

@@ -288,7 +288,24 @@ static void test_search_engine_uses_engine(void) {
     TEST_ASSERT_EQ_STR([c searchEngineMainPage], @"https://search.example.com/");
 }
 
-// TDD: port vb_load_uri + is_plausible_uri decision logic into loadURI:.
+// TDD: the production singleton must be initialized with defaults, so on app
+// startup home-page/search shortcuts/etc. are populated (they were only ever
+// loaded in tests before, leaving the app defaulting to about:blank).
+static void test_shared_initialized_with_defaults(void) {
+    VimbConfig *c = [VimbConfig shared];
+    NSString *home = c.settings[@"home-page"];
+    TEST_ASSERT_TRUE(home != nil && home.length > 0);
+    // Default home page should resolve to a search engine page, not about:blank.
+    TEST_ASSERT_TRUE(![home hasPrefix:@"about:"]);
+    TEST_ASSERT_TRUE([home containsString:@"duckduckgo.com"]);
+    // scroll-step and default shortcut should be populated too.
+    TEST_ASSERT_EQ_I([c getInt:@"scroll-step" defaultValue:0], 40);
+    TEST_ASSERT_TRUE(c.defaultShortcut.length > 0);
+    // The shared singleton is cached: a second access returns the same object.
+    VimbConfig *c2 = [VimbConfig shared];
+    TEST_ASSERT_TRUE(c == c2);
+}
+
 // These cases mirror src/main.c:424 is_plausible_uri / vb_load_uri:
 //   - contains "://" (no space) or "about:" -> direct
 //   - real file path -> file:// (covered separately)
@@ -1043,6 +1060,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_shortcut_no_placeholder_template);
     RUN_TEST(test_search_engine_uses_engine);
     RUN_TEST(test_loaduri_decision);
+    RUN_TEST(test_shared_initialized_with_defaults);
 
     RUN_TEST(test_config_get_and_source_content);
     RUN_TEST(test_config_convert_edge_cases);
