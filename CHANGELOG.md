@@ -10,13 +10,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 * `FEATURE_NO_TABS` in src/config.h to allow the user to compile vimb without
   tab support - which is useful in when the tabs are handles by the
   windowmanager
-
-## [3.7.1]
-### Added
-* Allow special keys to be escaped in mappings using `\`. For example, `\<C-R>`
-  represents the key sequence `<`, `C`, `-`, `R`, `>`.
-* Add `<Bslash>` as an alias for `\` in mappings. For example, `<Bslash><C-R>`
-  represents the key sequence `\` followed by CTRL-R.
 * Native tab support within a single window. New normal mode commands:
   * `gt` - go to next tab
   * `gT` - go to previous tab
@@ -36,8 +29,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 * Migrated from GTK3 to GTK4
 * Migrated from WebKitGTK 4.1 to WebKitGTK 6.0
-* Reworked communication between main process and webextension
-* Replaced deprecated DOM API by JavaScript snippets
 * Replaced D-Bus IPC by WebKit provided IPC (WebKitUserMessage)
 * Replaced deprecated GtkListStore/GtkTreeView completion with
   GListStore/GtkListView for GTK4 compatibility
@@ -48,7 +39,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 * Applied smooth scrolling to all scroll commands too - thanks to Doxnit
 
 ### Fixed
-* Fixed crash of webextension on pages with cross-origin iframes
 * Fixed memory leaks in various functions:
   * `util_build_path()` - leaked result from `g_get_current_dir()`
   * `vb_register_add()` - leaked result from `g_strjoin()`
@@ -76,6 +66,17 @@ deprecated and removed in WebKitGTK 6.0.
 5. offline-cache (bool) `enable-offline-web-application-cache` deprecated and does nothing
 6. plugins (bool) `enable-plugins` deprecated and removed in WebKitGTK 6.0
 7. xss-auditor (bool) `enable-xss-auditor` deprecated and removed in WebKitGTK 6.0
+
+## [3.7.1]
+### Added
+* Allow special keys to be escaped in mappings using `\`. For example, `\<C-R>`
+  represents the key sequence `<`, `C`, `-`, `R`, `>`.
+* Add `<Bslash>` as an alias for `\` in mappings. For example, `<Bslash><C-R>`
+  represents the key sequence `\` followed by CTRL-R.
+* Fixes crash of webextension on pages with cross-origin iframes
+### Changed
+* Reworked communication between main process and webextension
+* Replaced deprecated DOM API by JavaScript snippets
 
 ## [3.7.0] - 2023-06-19
 ### Added
