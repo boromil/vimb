@@ -291,6 +291,11 @@ static NSString *const GVimJS =
     _editableFocusActive = NO;
     [self evaluateJavaScript:@"(()=>{const e=document.activeElement;if(e&&(e.isContentEditable||/^(INPUT|TEXTAREA)$/.test(e.tagName)))e.blur();})()"
             completionHandler:nil];
+    // Apply the default-zoom setting (parity with default_zoom in setting.c).
+    CGFloat zoom = [[VimbConfig shared] getInt:@"default-zoom" defaultValue:100] / 100.0;
+    if (zoom > 0 && zoom != 1.0 && self.magnification != zoom) {
+        self.magnification = zoom;
+    }
     NSString *uri = self.URL.absoluteString ?: @"";
     [[VimbConfig shared].autocmd fireEvent:VAuLoadFinished uri:uri];
     id<KeyboardWebViewDelegate> d = self.vbDelegate;
