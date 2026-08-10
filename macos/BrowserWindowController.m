@@ -1088,8 +1088,14 @@ static const CGFloat kStatusHeight = 24.0;
     [self showMessage:[NSString stringWithFormat:@"Search: %@", query] error:NO];
 }
 - (void)vimSearchDirection:(NSInteger)dir {
-    // dir is a count; sign indicates direction. Re-run the last query.
-    [self.activeTab.webView findNextDirection:(dir >= 0)];
+    // dir is a signed count: sign = direction, magnitude = repeat count.
+    KeyboardWebView *wv = self.activeTab.webView;
+    BOOL forward = (dir >= 0);
+    NSInteger n = labs(dir);
+    if (n < 0) { n = 1; }
+    for (NSInteger i = 0; i < n; i++) {
+        [wv findNextDirection:forward];
+    }
 }
 - (void)vimSearchSelectionForward:(BOOL)forward {
     // #/* search the current page selection (port of normal_search_selection).
