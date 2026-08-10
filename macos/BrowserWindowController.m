@@ -12,6 +12,9 @@ static const CGFloat kStatusHeight = 24.0;
 @property(nonatomic, strong) VimbEx *exEngine;
 @property(nonatomic, strong) VimbRegisters *registers;
 @property(nonatomic, strong) VimbMarks *marks;
+@property(nonatomic, strong) NSMutableArray<NSString *> *completionCycle;
+@property(nonatomic, copy) NSString *completionPrefixLine;
+@property(nonatomic, assign) NSInteger completionIndex;
 @property(nonatomic, strong) NSMutableArray<VimbTab *> *tabs;
 @property(nonatomic, weak) VimbTab *activeTab;
 
@@ -45,6 +48,7 @@ static const CGFloat kStatusHeight = 24.0;
         _exEngine.actor = self;
         _registers = [[VimbRegisters alloc] init];
         _marks = [[VimbMarks alloc] init];
+        _completionCycle = [NSMutableArray array];
         _tabs = [NSMutableArray array];
         _tabButtons = [NSMutableArray array];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(vimbRunCommand:)
@@ -97,9 +101,7 @@ static const CGFloat kStatusHeight = 24.0;
         [self.tabBar.topAnchor constraintEqualToAnchor:tabHost.topAnchor],
         [self.tabBar.bottomAnchor constraintEqualToAnchor:tabHost.bottomAnchor],
     ]];
-    NSButton *closeBtn = [NSButton buttonWithTitle:@"×" target:self action:@selector(closeActiveTabAction:)];
     NSButton *newBtn = [NSButton buttonWithTitle:@"+" target:self action:@selector(newTabAction:)];
-    [self.tabBar addArrangedSubview:closeBtn];
     [self.tabBar addArrangedSubview:newBtn];
 
     [v addArrangedSubview:tabHost];
@@ -175,7 +177,6 @@ static const CGFloat kStatusHeight = 24.0;
     [self updateStatus];
 }
 
-- (void)closeActiveTabAction:(id)sender { [self closeActiveTab]; }
 - (void)newTabAction:(id)sender { [self newTabInWindow]; }
 - (void)closeActiveTab {
     if (self.tabs.count == 0) { return; }
@@ -755,7 +756,14 @@ static const CGFloat kStatusHeight = 24.0;
 
 #pragma mark - Command field (NSTextFieldDelegate)
 
-- (void)controlTextDidChange:(NSNotification *)obj { }
+- (void)controlTextDidChange:(NSNotification *)obj {
+    // Reset any active completion cycle once the user edits the text.
+    if (self.completionCycle.count > 0) {
+        [self.completionCycle removeAllObjects];
+        self.completionPrefixLine = nil;
+        self.completionIndex = 0;
+    }
+}
 - (void)controlTextDidEndEditing:(NSNotification *)obj { }
 
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector {
@@ -780,59 +788,132 @@ static const CGFloat kStatusHeight = 24.0;
             [self completeCommandField];
             return YES;
         }
+        if (commandSelector == @selector(insertBacktab:)) {
+            [self completeCommandFieldDirection:-1];
+            return YES;
+        }
     }
     return NO;
 }
 
-// Tab completion for the command line: completes :open/:bdelete urls from
-// history+bookmarks+closed, and :set names from the settings registry.
-- (void)completeCommandField {
+// Tab completion for the command line, mirroring ex.c's complete(). Tab
+// completes and steps forward, Shift+Tab steps backward. Completes: command
+// names, :open/:tabopen URLs (history+bookmarks+closed), :set names,
+// :bma/:bmr bookmarks, and /-? search history.
+- (void)completeCommandField { [self completeCommandFieldDirection:1]; }
+
+- (void)completeCommandFieldDirection:(NSInteger)direction {
     NSString *line = self.commandField.stringValue;
-    VimMode m = self.vim.mode;
-    if (m == VimModeSearch) { return; }
+
+    // If a completion is already active, step to the next/prev candidate.
+    if (self.completionCycle.count > 0) {
+        [self stepCompletion:direction];
+        return;
+    }
+
     NSMutableArray<NSString *> *cands = [NSMutableArray array];
+
+    if ([line hasPrefix:@"/"] || [line hasPrefix:@"?"]) {
+        NSString *prefix = [line substringFromIndex:1];
+        for (NSString *h in [[VimbConfig shared].searchStore lines]) {
+            if ([h hasPrefix:prefix] && ![cands containsObject:h]) { [cands addObject:h]; }
+        }
+        if (cands.count == 1) { [self applyCompletion:[NSString stringWithFormat:@"%C", [line characterAtIndex:0]] appendTo:[line substringFromIndex:1] value:cands[0]]; }
+        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
 
     if ([line hasPrefix:@"open "] || [line hasPrefix:@"tabopen "]) {
         BOOL tab = [line hasPrefix:@"tabopen "];
         NSString *prefix = [line substringFromIndex:(tab ? 8 : 5)];
-        for (NSDictionary *b in [self bookmarksByPrefix:prefix]) { [cands addObject:b[@"url"]]; }
-        for (NSString *h in [[VimbConfig shared].historyStore lines]) { if ([h hasPrefix:prefix] && ![cands containsObject:h]) [cands addObject:h]; }
-        for (NSString *c in [[VimbConfig shared].closedStore lines]) { if ([c hasPrefix:prefix] && ![cands containsObject:c]) [cands addObject:c]; }
-        if (cands.count == 1) {
-            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", tab ? @"tabopen " : @"open ", cands[0]];
-        } else if (cands.count > 1 && cands.count <= 8) {
-            [self showMessage:[cands componentsJoinedByString:@"  "] error:NO];
-        } else if (cands.count > 8) {
-            [self showMessage:[NSString stringWithFormat:@"%lu completions", (unsigned long)cands.count] error:NO];
-        }
-    } else if ([line hasPrefix:@"bdelete "] || [line hasPrefix:@"bd "]) {
-        NSString *prefix = [line containsString:@" "] ? [line substringFromIndex:([line rangeOfString:@" "].location + 1)] : @"";
-        for (VimbTab *t in self.tabs) {
-            NSString *turl = t.url.absoluteString ?: t.webView.URL.absoluteString ?: @"";
-            NSString *ttitle = t.title ?: @"";
-            if ([turl hasPrefix:prefix] || [ttitle hasPrefix:prefix]) {
-                [cands addObject:[NSString stringWithFormat:@"%@ — %@", ttitle, turl]];
-            }
+        BOOL book = [prefix hasPrefix:@"!"];
+        if (book) { prefix = [prefix substringFromIndex:1]; }
+        for (NSDictionary *b in [self bookmarksByPrefix:prefix]) { if (book || [b[@"url"] hasPrefix:prefix]) [cands addObject:b[@"url"]]; }
+        if (!book) {
+            for (NSString *h in [[VimbConfig shared].historyStore lines]) { if ([h hasPrefix:prefix] && ![cands containsObject:h]) [cands addObject:h]; }
+            for (NSString *c in [[VimbConfig shared].closedStore lines]) { if ([c hasPrefix:prefix] && ![cands containsObject:c]) [cands addObject:c]; }
         }
         if (cands.count == 1) {
-            self.commandField.stringValue = line;
-            [self showMessage:[NSString stringWithFormat:@"%lu matching tab(s)", (unsigned long)cands.count] error:NO];
+            NSString *full = cands[0];
+            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", tab ? @"tabopen " : @"open ", full];
         } else if (cands.count > 1) {
-            [self showMessage:[cands componentsJoinedByString:@"  "] error:NO];
+            [self startCompletionCycle:cands ofLine:line];
         }
-    } else if ([line hasPrefix:@"set "]) {
+        return;
+    }
+
+    if ([line hasPrefix:@"set "]) {
         NSString *prefix = [line substringFromIndex:4];
         for (NSString *name in [VimbConfig shared].settings.allKeys) {
             if ([name hasPrefix:prefix]) { [cands addObject:name]; }
         }
-        if (cands.count == 1) {
-            self.commandField.stringValue = [NSString stringWithFormat:@"set %@", cands[0]];
-        } else if (cands.count > 1 && cands.count <= 8) {
-            [self showMessage:[cands componentsJoinedByString:@"  "] error:NO];
-        }
-    } else if ([line hasPrefix:@"shellcmd "]) {
-        // no shell completion on native
+        if (cands.count == 1) { self.commandField.stringValue = [NSString stringWithFormat:@"set %@", cands[0]]; }
+        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
     }
+
+    if ([line hasPrefix:@"bma "] || [line hasPrefix:@"bmr "]) {
+        NSString *prefix = [line containsString:@" "] ? [line substringFromIndex:([line rangeOfString:@" "].location + 1)] : @"";
+        for (NSDictionary *b in [self bookmarksByPrefix:prefix]) { [cands addObject:b[@"url"]]; }
+        if (cands.count == 1) {
+            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@",
+                [line hasPrefix:@"bmr "] ? @"bmr " : @"bma ", cands[0]];
+        } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    if ([line hasPrefix:@"bdelete "] || [line hasPrefix:@"bd "] || [line hasPrefix:@"b "]) {
+        NSString *prefix = [line containsString:@" "] ? [line substringFromIndex:([line rangeOfString:@" "].location + 1)] : @"";
+        for (VimbTab *t in self.tabs) {
+            NSString *turl = t.url.absoluteString ?: t.webView.URL.absoluteString ?: @"";
+            NSString *ttitle = t.title ?: @"";
+            if ([turl hasPrefix:prefix] || [ttitle hasPrefix:prefix]) { [cands addObject:turl]; }
+        }
+        if (cands.count == 1) {
+            NSString *head = [line hasPrefix:@"bd "] ? @"bd " : ([line hasPrefix:@"b "] ? @"b " : @"bdelete ");
+            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", head, cands[0]];
+        } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    // Bare command name completion (the leading ':' is not in the field text).
+    NSString *cmdPrefix = line;
+    BOOL hasSpace = [line rangeOfString:@" "].location != NSNotFound;
+    if (!hasSpace || [line hasPrefix:@":"]) {
+        if ([line hasPrefix:@":"]) { cmdPrefix = [line substringFromIndex:1]; }
+        for (NSString *name in self.exEngine.commandNames) {
+            if ([name hasPrefix:cmdPrefix]) { [cands addObject:name]; }
+        }
+        if (cands.count == 1) {
+            self.commandField.stringValue = cands[0];
+        } else if (cands.count > 1) {
+            [self startCompletionCycle:cands ofLine:line];
+        }
+    }
+}
+
+- (void)startCompletionCycle:(NSArray<NSString *> *)cands ofLine:(NSString *)line {
+    self.completionCycle = [NSMutableArray arrayWithArray:cands];
+    self.completionPrefixLine = line;
+    [self showMessage:[cands componentsJoinedByString:@"  "] error:NO];
+    [self stepCompletion:1];
+}
+
+- (void)stepCompletion:(NSInteger)direction {
+    if (self.completionCycle.count == 0) { return; }
+    self.completionIndex = (self.completionIndex + (direction > 0 ? 1 : -1) + (NSInteger)self.completionCycle.count) % (NSInteger)self.completionCycle.count;
+    NSString *choice = self.completionCycle[self.completionIndex];
+    [self showMessage:choice error:NO];
+    // Replace the last token of the current line with the chosen completion.
+    NSString *cur = self.commandField.stringValue;
+    NSRange sp = [cur rangeOfString:@" " options:NSBackwardsSearch];
+    NSString *head = (sp.location == NSNotFound) ? @"" : [cur substringToIndex:sp.location + 1];
+    self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", head, choice];
+}
+
+- (void)applyCompletion:(NSString *)prefix appendTo:(NSString *)edited value:(NSString *)value {
+    self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", prefix, value];
+    (void)edited;
 }
 
 @end
