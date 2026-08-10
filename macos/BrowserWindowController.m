@@ -1263,9 +1263,19 @@ static const CGFloat kStatusHeight = 24.0;
         [wv scrollToY:top];
     }
 }
-- (void)vimZoom:(BOOL)in {
+- (void)vimZoomKey:(unichar)key count:(NSInteger)count {
+    if (count < 1) { count = 1; }
+    if (key == 'z') {
+        // zz: reset to default zoom.
+        self.activeTab.webView.magnification = [[VimbConfig shared] getInt:@"default-zoom" defaultValue:100] / 100.0;
+        return;
+    }
     CGFloat f = self.activeTab.webView.magnification;
-    f = in ? f + 0.1 : MAX(0.5, f - 0.1);
+    if (key == 'i' || key == 'I') {
+        f += (CGFloat)count * 0.1;
+    } else { // 'o' / 'O': zoom out
+        f = MAX(0.5, f - (CGFloat)count * 0.1);
+    }
     self.activeTab.webView.magnification = f;
 }
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count {

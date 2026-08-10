@@ -67,7 +67,7 @@ static NSString *S(unichar c) {
 - (void)vimSetMark:(unichar)c { [self record:[NSString stringWithFormat:@"setmark:%C", c]]; }
 - (void)vimJumpMark:(unichar)c { [self record:[NSString stringWithFormat:@"jumpmark:%C", c]]; }
 - (void)vimViewSource { [self record:@"viewsource"]; }
-- (void)vimZoom:(BOOL)in { [self record:[NSString stringWithFormat:@"zoom:%d", in]]; }
+- (void)vimZoomKey:(unichar)key count:(NSInteger)count { [self record:[NSString stringWithFormat:@"zoom:%C:%ld", key, (long)count]]; }
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count { [self record:[NSString stringWithFormat:@"incr:%d:%ld", up, (long)count]]; }
 - (void)vimQuit { [self record:@"quit"]; }
 - (void)vimOpenClipboard:(NSString *)counter { [self record:[NSString stringWithFormat:@"clipboard:%@", counter]]; }
@@ -967,9 +967,13 @@ static void test_controller_openclipboard_yank_focus(void) {
     feed(vc, @"u"); TEST_ASSERT_TRUE([spy.calls containsObject:@"home"]);
     feed(vc, @"U"); TEST_ASSERT_TRUE([spy.calls containsObject:@"home"]);
 
-    // zoom z (needs a second key to complete the chord).
+    // zoom z (needs a second key to complete the chord): zz reset, zi in, zo out.
     vc = newVc(spy); feed(vc, @"z"); feed(vc, @"z");
-    TEST_ASSERT_TRUE([spy.calls containsObject:@"zoom:1"]);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"zoom:z:0"]);
+    [spy.calls removeAllObjects]; feed(vc, @"z"); feed(vc, @"i");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"zoom:i:0"]);
+    [spy.calls removeAllObjects]; feed(vc, @"z"); feed(vc, @"o");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"zoom:o:0"]);
 }
 
 static void test_controller_gcmd(void) {

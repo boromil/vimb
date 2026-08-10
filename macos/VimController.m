@@ -558,7 +558,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"zoom"]) {
-        [d vimZoom:(cnt >= 0 ? YES : NO)];
+        // z + iIoOz: in/out/reset (normal_zoom). Uses the secondary key.
+        [d vimZoomKey:k2 count:cnt];
         return HBResultComplete;
     }
     if ([name isEqualToString:@"prevnext"]) {
