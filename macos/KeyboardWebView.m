@@ -163,6 +163,30 @@ static NSString *const GVimJS =
                                                  forMainFrameOnly:NO];
     [ucc addUserScript:cssScript];
 
+    // User scripts.js / style.css from the config dir (parity with
+    // user_scripts/user_style in setting.c): inject at document end.
+    NSString *userScript = [[VimbConfig shared] userScriptSource];
+    if (userScript) {
+        [ucc addUserScript:[[WKUserScript alloc] initWithSource:userScript
+                                                   injectionTime:WKUserScriptInjectionTimeAtDocumentEnd
+                                                forMainFrameOnly:NO]];
+    }
+    NSString *userStyle = [[VimbConfig shared] userStyleSource];
+    if (userStyle) {
+        // Inject the user stylesheet as a <style> element (WKUserStyleSheet is a
+        // private API on this SDK). Parity with user_style in setting.c.
+        NSString *escapedCSS = [userStyle stringByReplacingOccurrencesOfString:@"</" withString:@"<\\/"];
+        NSString *styleJS = [NSString stringWithFormat:
+            @"(function(){if(document.getElementById('vimb-user-style'))return;"
+            @"var s=document.createElement('style');s.id='vimb-user-style';"
+            @"s.textContent=%@;"
+            @"(document.head||document.documentElement).appendChild(s);})();",
+            [self jsStringLiteral:escapedCSS]];
+        [ucc addUserScript:[[WKUserScript alloc] initWithSource:styleJS
+                                                   injectionTime:WKUserScriptInjectionTimeAtDocumentEnd
+                                                forMainFrameOnly:NO]];
+    }
+
     [ucc addScriptMessageHandler:self name:@"vimb"];
     config.userContentController = ucc;
 

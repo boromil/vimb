@@ -386,6 +386,20 @@ static NSString *replaceFirstPlaceholder(NSString *tmpl, NSInteger num, NSString
     return hit.location == NSNotFound;
 }
 
+- (nullable NSString *)userScriptSource {
+    if (![self getBool:@"user-scripts" defaultValue:YES]) { return nil; }
+    NSString *path = [[VimbStorage appSupportDir] stringByAppendingPathComponent:@"scripts.js"];
+    NSString *s = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    return (s && s.length) ? s : nil;
+}
+
+- (nullable NSString *)userStyleSource {
+    if (![self getBool:@"stylesheet" defaultValue:YES]) { return nil; }
+    NSString *path = [[VimbStorage appSupportDir] stringByAppendingPathComponent:@"style.css"];
+    NSString *s = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    return (s && s.length) ? s : nil;
+}
+
 - (NSString *)loadURI:(NSString *)input {
     NSString *path = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (path.length == 0) {

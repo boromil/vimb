@@ -650,6 +650,23 @@ static void test_download_directory_setting(void) {
     TEST_ASSERT_EQ_STR([c downloadsDirectory], @"/tmp/vimb-dl");
 }
 
+static void test_user_script_style_gating(void) {
+    VimbConfig *c = [[VimbConfig alloc] init];
+    [c loadDefaults];
+    // Reading the real user data dir. In a clean environment neither
+    // scripts.js nor style.css exists, so both return nil. This verifies the
+    // methods are callable and don't return garbage.
+    NSString *sc = [c userScriptSource];
+    NSString *st = [c userStyleSource];
+    TEST_ASSERT_TRUE(sc == nil || [sc isKindOfClass:[NSString class]]);
+    TEST_ASSERT_TRUE(st == nil || [st isKindOfClass:[NSString class]]);
+    // Disabling the setting forces nil regardless of any installed file.
+    [c applySetting:@"user-scripts" value:@NO];
+    [c applySetting:@"stylesheet" value:@NO];
+    TEST_ASSERT_TRUE([c userScriptSource] == nil);
+    TEST_ASSERT_TRUE([c userStyleSource] == nil);
+}
+
 static void test_histignore_history_filter(void) {
     VimbConfig *c = [[VimbConfig alloc] init];
     // Empty histignore -> record everything.
@@ -1291,6 +1308,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_download_directory_setting);
     RUN_TEST(test_scroll_step_from_settings);
     RUN_TEST(test_histignore_history_filter);
+    RUN_TEST(test_user_script_style_gating);
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
 

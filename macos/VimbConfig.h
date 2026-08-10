@@ -90,6 +90,11 @@ NS_ASSUME_NONNULL_BEGIN
 // Whether a URL should be recorded in history (i.e. does NOT match the
 // histignore regex). Port of the GTK4 histignore check in main.c.
 - (BOOL)shouldRecordURL:(NSString *)url;
+// Contents of the user scripts.js / style.css in the config dir, or nil when
+// the setting is disabled or the file is absent (parity with user_scripts /
+// user_style in setting.c).
+- (nullable NSString *)userScriptSource;
+- (nullable NSString *)userStyleSource;
 // Decide what to load for an open input (port of src/main.c vb_load_uri):
 // returns the direct URL, a search/shortcut URL, or an http:// fallback.
 - (NSString *)loadURI:(NSString *)input;
