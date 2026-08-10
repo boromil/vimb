@@ -337,31 +337,36 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     }
     if ([name isEqualToString:@"cmdline"]) {
         if (c == 'f' || c == 'F') {
-            // f/F: enter hint mode and follow a link. Hints engine owns the
-            // overlay; the webview stays focused so typed keys filter hints.
+            // f: follow (current tab), F: follow in a new tab.
+            self.mode = VimModeHint;
             [d vimOpenPrompt:@"" mode:VimModeHint];
-            [d vimToggleHints];
+            [d vimEnterHints:(c == 'F') ? @"t" : @"o"];
         } else if (c == '/' || c == '?') {
-            [d vimOpenPrompt:[NSString stringWithFormat:@"%c", c] mode:VimModeSearch];
+            self.mode = VimModeSearch;
             self.promptForMode = (c == '/') ? @"forward" : @"backward";
+            [d vimOpenPrompt:[NSString stringWithFormat:@"%c", c] mode:VimModeSearch];
         } else {
+            self.mode = VimModeCommand;
             [d vimOpenPrompt:@":" mode:VimModeCommand];
         }
         return HBResultComplete;
     }
     if ([name isEqualToString:@"hint"]) {
-        // ';' + follow key: enter hint mode.
+        // ';' + follow key (key2) chooses the hint action.
+        NSString *hintMode = [NSString stringWithFormat:@"%c", k2 ? k2 : 'o'];
+        self.mode = VimModeHint;
         [d vimOpenPrompt:@"" mode:VimModeHint];
-        [d vimToggleHints];
+        [d vimEnterHints:hintMode];
         return HBResultComplete;
     }
     if ([name isEqualToString:@"inputopen"]) {
-        // o/O/t/T : open prompt prefilled with the current URI.
-        BOOL tab = (c == 'O' || c == 'T');
+        // o/O/t/T : open prompt prefilled with the command prefix.
+        BOOL tab = (c == 't' || c == 'T');    // t/T -> tabopen, o/O -> open
+        BOOL withURI = (c == 'O' || c == 'T'); // uppercase pre-fills current URI
         NSString *prefix = tab ? @"tabopen " : @"open ";
-        NSString *cur = @"";
+        self.mode = VimModeCommand;
         [d vimOpenPrompt:prefix mode:VimModeCommand];
-        (void)cur;
+        (void)withURI;
         return HBResultComplete;
     }
     if ([name isEqualToString:@"openclipboard"]) {
