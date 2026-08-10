@@ -59,17 +59,26 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     return names;
 }
 
-// Matches a possibly-abbreviated command name against the table.
+// Matches a possibly-abbreviated command name against the table. An exact
+// match always wins (so ":quit" resolves to quit, not the ambiguous
+// quitall). Otherwise a single unique prefix match is accepted; multiple
+// prefix matches are reported as ambiguous (nil), mirroring vim's ":cmd<abbr>"
+// behavior without surprising the common, exact commands.
 - (NSString *)matchCommand:(NSString *)name {
-    NSString *match = nil;
+    // Exact match always wins (so ":quit" resolves to quit, not quitall, and
+    // ":tabp" to tabp, not tabprevious). Otherwise a single unique prefix
+    // match is accepted; multiple prefix matches are ambiguous (nil).
     for (NSArray<NSString *> *r in _table) {
-        NSString *cand = r[0];
-        if ([cand hasPrefix:name]) {
-            if (match) { return nil; } // ambiguous
-            match = cand;
+        if ([r[0] isEqualToString:name]) { return r[0]; }
+    }
+    NSString *prefixMatch = nil;
+    for (NSArray<NSString *> *r in _table) {
+        if ([r[0] hasPrefix:name]) {
+            if (prefixMatch) { return nil; } // ambiguous
+            prefixMatch = r[0];
         }
     }
-    return match;
+    return prefixMatch;
 }
 
 - (NSString *)expandToken:(NSString *)token {

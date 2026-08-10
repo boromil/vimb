@@ -103,21 +103,26 @@ static NSString *eventName(VAuEvent e) {
         if (inCmd) { /* keep scanning; spaces separate cmd words */ }
     }
 
-    if (cmdParts.count == 0) {
-        if (self.reporter) self.reporter(@"autocmd: missing command", YES);
-        return YES;
-    }
-
     // tokens[0] may be a group name (if != current group and known), else event.
     NSString *eventWord = nil;
     NSString *pattern = @"*";
     NSUInteger idx = 0;
     if (bang && tokens.count >= 1) {
-        // delete: :autocmd! event [pat]  (pattern optional)
+        // delete: :autocmd! event [pat]  (pattern optional) — no command needed.
         eventWord = tokens[0];
         if (tokens.count > 1) { pattern = tokens[1]; }
-        [self removeEvent:[self nameToEvent:eventWord] pattern:pattern];
+        if ([eventWord hasPrefix:@"*"]) {
+            [self removeEvent:VAuAll pattern:pattern];
+        } else {
+            [self removeEvent:[self nameToEvent:eventWord] pattern:pattern];
+        }
         if (self.reporter) self.reporter(@"autocmd: removed", NO);
+        return YES;
+    }
+
+    // Only non-deletion lines require a trailing :command.
+    if (cmdParts.count == 0) {
+        if (self.reporter) self.reporter(@"autocmd: missing command", YES);
         return YES;
     }
 

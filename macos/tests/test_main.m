@@ -622,6 +622,10 @@ static void test_controller_hint_and_search(void) {
 
 #pragma mark - main
 
+// Behavior/shortcut/map/coverage tests live in test_behavior.m. Both harnesses
+// use separate static counters in testlib.h, so run them and AND the results.
+extern int run_behavior_main(void);
+
 int main(void) {
     RUN_TEST(test_storage_prepend_dedup_max);
     RUN_TEST(test_storage_removeLine_top_popLast_clear);
@@ -655,5 +659,7 @@ int main(void) {
     RUN_TEST(test_controller_command_mode_reset);
     RUN_TEST(test_controller_hint_and_search);
 
-    return RUN_ALL_TESTS();
+    int ok1 = RUN_ALL_TESTS();
+    int ok2 = run_behavior_main();
+    return (ok1 || ok2) ? 1 : 0;
 }

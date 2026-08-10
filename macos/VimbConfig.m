@@ -189,6 +189,147 @@ static const NSString *COOKIE_ACCEPT = @"ask";
     return s;
 }
 
+- (void)addShortcut:(NSString *)key uri:(NSString *)uri {
+    self.shortcuts[key] = uri;
+}
+
+- (BOOL)removeShortcut:(NSString *)key {
+    BOOL had = self.shortcuts[key] != nil;
+    [self.shortcuts removeObjectForKey:key];
+    return had;
+}
+
+- (void)setDefaultShortcutKey:(NSString *)key {
+    // Do not require the key to exist yet (mirrors shortcut_set_default).
+    self.defaultShortcut = key;
+}
+
+#pragma mark - Shortcut expansion engine (port of src/shortcut.c)
+
+// Returns the highest placeholder index ($0..$9) in template, or -1 if there
+// are no placeholders.
+static NSInteger maxPlaceholder(NSString *tmpl) {
+    NSInteger res = -1;
+    NSUInteger len = tmpl.length;
+    for (NSUInteger i = 0; i + 1 < len; i++) {
+        if ([tmpl characterAtIndex:i] == '$') {
+            unichar d = [tmpl characterAtIndex:i + 1];
+            if (d >= '0' && d <= '9') {
+                NSInteger n = d - '0';
+                if (n > res) { res = n; }
+            }
+        }
+    }
+    return res;
+}
+
+// Percent-encoder matching GLib's g_uri_escape_string(tok, NULL, TRUE): the
+// RFC unreserved set plus the sub-delim "'" (single quote) are left as-is;
+// everything else (including '"') is percent-encoded. Space -> %20.
+static NSString *encodeShortcutToken(NSString *token) {
+    NSCharacterSet *safe = [NSCharacterSet
+        characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~'"];
+    return [token stringByAddingPercentEncodingWithAllowedCharacters:safe];
+}
+
+// Substitutes the FIRST occurrence of $<digit> in tmpl with a percent-encoded
+// token (port of util_str_replace + g_uri_escape_string).
+static NSString *replaceFirstPlaceholder(NSString *tmpl, NSInteger num, NSString *token) {
+    NSString *encoded = encodeShortcutToken(token);
+    NSString *ph = [NSString stringWithFormat:@"$%ld", (long)num];
+    NSRange r = [tmpl rangeOfString:ph];
+    if (r.location == NSNotFound) { return tmpl; }
+    return [tmpl stringByReplacingCharactersInRange:r withString:encoded ?: @""];
+}
+
+- (NSString *)expandShortcutTemplate:(NSString *)tmpl query:(NSString *)query {
+    NSInteger maxNum = maxPlaceholder(tmpl);
+    if (maxNum == 0) {
+        // Only $0 placeholders (or none-but-nonzero handled below): encode the
+        // whole query and substitute every $0 (mirrors shortcut_get_uri).
+        NSString *encoded = encodeShortcutToken(query);
+        return [tmpl stringByReplacingOccurrencesOfString:@"$0" withString:encoded ?: @""];
+    }
+    if (maxNum < 0) {
+        return tmpl; // no placeholders at all
+    }
+
+    NSMutableString *uri = [tmpl mutableCopy];
+    NSInteger currentNum = 0;
+    NSUInteger i = 0;
+    NSMutableString *token = [NSMutableString string];
+    NSCharacterSet *whitespace = [NSCharacterSet whitespaceCharacterSet];
+
+    while (i < query.length) {
+        unichar c = [query characterAtIndex:i];
+        if (c == '"' || c == '\'') {
+            unichar lastQuote = c;
+            i++;
+            while (i < query.length && [query characterAtIndex:i] != lastQuote) {
+                [token appendFormat:@"%C", [query characterAtIndex:i]];
+                i++;
+            }
+            if (i < query.length && [query characterAtIndex:i] == lastQuote) {
+                i++;
+            }
+        } else if ([whitespace characterIsMember:c]) {
+            i++;
+            continue;
+        } else if (currentNum >= maxNum) {
+            while (i < query.length) {
+                [token appendFormat:@"%C", [query characterAtIndex:i]];
+                i++;
+            }
+        } else {
+            while (i < query.length &&
+                   ![whitespace characterIsMember:[query characterAtIndex:i]]) {
+                [token appendFormat:@"%C", [query characterAtIndex:i]];
+                i++;
+            }
+        }
+
+        if (token.length) {
+            uri = [replaceFirstPlaceholder(uri, currentNum, token) mutableCopy];
+            [token setString:@""];
+        }
+        currentNum++;
+    }
+
+    return uri;
+}
+
+// Port of shortcut_get_uri's lookup: the leading word is matched against the
+// shortcut table; if absent (or not a shortcut) the default shortcut is used.
+- (nullable NSString *)shortcutURIForInput:(NSString *)input {
+    NSString *tmpl = nil;
+    NSString *query = input;
+    NSRange sp = [input rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (sp.location != NSNotFound) {
+        NSString *key = [input substringToIndex:sp.location];
+        tmpl = self.shortcuts[key];
+        if (tmpl) {
+            query = [input substringFromIndex:sp.location + 1];
+        }
+    } else {
+        tmpl = self.shortcuts[input];
+    }
+
+    if (!tmpl) {
+        NSString *fb = self.defaultShortcut ?: @"dl";
+        tmpl = self.shortcuts[fb];
+        if (!tmpl) { return nil; }
+        query = input;
+    }
+
+    return [self expandShortcutTemplate:tmpl query:query];
+}
+
+- (NSString *)applyShortcut:(NSString *)key query:(NSString *)query {
+    NSString *tmpl = self.shortcuts[key];
+    if (!tmpl) { return @""; }
+    return [self expandShortcutTemplate:tmpl query:query];
+}
+
 - (NSString *)searchEngineMainPage {
     NSString *url = self.shortcuts[self.defaultShortcut] ?: @"https://duckduckgo.com/html/?q=$0";
     // Strip the query component (e.g. "?q=$0") to get the engine's main page.
@@ -201,26 +342,30 @@ static const NSString *COOKIE_ACCEPT = @"ask";
 }
 
 - (NSString *)searchURLForQuery:(NSString *)query {
-    NSString *url = self.shortcuts[self.defaultShortcut] ?: @"https://duckduckgo.com/html/?q=$0";
-    NSString *encoded = [query stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
-    return [url stringByReplacingOccurrencesOfString:@"$0" withString:encoded];
+    // Full vimb shortcut engine (default shortcut template with $0..$N).
+    NSString *url = [self shortcutURIForInput:query];
+    return url ?: @"https://duckduckgo.com/html/?q=$0";
 }
 
 - (NSString *)historyCommand {
     return [[VimbStorage appSupportDir] stringByAppendingPathComponent:@"config"];
 }
 
-- (void)sourceConfigFile {
-    // Parse rc file: each non-comment line is an ex command; run them.
-    NSString *path = self.historyCommand;
-    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-    if (!content) { return; }
+- (void)executeSourceContent:(NSString *)content {
+    // Parse rc content: each non-comment line is an ex command; run them.
     for (NSString *raw in [content componentsSeparatedByString:@"\n"]) {
         NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (line.length == 0 || [line hasPrefix:@"\""] || [line hasPrefix:@"#"]) { continue; }
         [[NSNotificationCenter defaultCenter] postNotificationName:@"VimbRunCommand"
             object:nil userInfo:@{@"command": line}];
     }
+}
+
+- (void)sourceConfigFile {
+    NSString *path = self.historyCommand;
+    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (!content) { return; }
+    [self executeSourceContent:content];
 }
 
 #pragma mark - Keys / mappings

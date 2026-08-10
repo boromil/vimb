@@ -100,9 +100,9 @@ $(TEST_OBJS): tests/%.o: %.m
 	@echo "  CC(T) $<"
 	@$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
 
-$(TEST_BIN).stamp: $(TEST_OBJS) tests/test_main.m
+$(TEST_BIN).stamp: $(TEST_OBJS) tests/test_main.m tests/test_behavior.m
 	@echo "  LD    $(TEST_BIN)"
-	@$(TEST_CC) $(TEST_CFLAGS) $(TEST_OBJS) tests/test_main.m $(TEST_LDFLAGS) -o $(TEST_BIN)
+	@$(TEST_CC) $(TEST_CFLAGS) $(TEST_OBJS) tests/test_main.m tests/test_behavior.m $(TEST_LDFLAGS) -o $(TEST_BIN)
 	@touch $(TEST_BIN).stamp
 
 tests: $(TEST_BIN).stamp

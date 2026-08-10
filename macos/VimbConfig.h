@@ -62,13 +62,30 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Shortcuts (e.g. "dd" -> "https://duckduckgo.com/?q=$0")
 - (nullable NSString *)resolveShortcut:(NSString *)input;
+// Full vimb shortcut engine: given a query line (possibly "__name__ <params>")
+// look up the matching shortcut (or the default) and substitute $0..$9
+// placeholders with the shell-style parsed parameters. Port of
+// src/shortcut.c shortcut_get_uri(). Returns nil when no shortcut matches.
+- (nullable NSString *)shortcutURIForInput:(NSString *)input;
+// Apply a specific (already resolved) shortcut template to a query string.
+- (NSString *)applyShortcut:(NSString *)key query:(NSString *)query;
+// Substitute the $0..$9 placeholders in a template against a raw query line.
+- (NSString *)expandShortcutTemplate:(NSString *)tmpl query:(NSString *)query;
+// Insert / remove / select the active shortcut. Ports of shortcut_add /
+// shortcut_remove / shortcut_set_default.
+- (void)addShortcut:(NSString *)key uri:(NSString *)uri;
+- (BOOL)removeShortcut:(NSString *)key;
+- (void)setDefaultShortcutKey:(NSString *)key;
 // The default search engine's main page URL (defaultShortcut with any
 // query suffix stripped), e.g. "https://duckduckgo.com/html/".
 - (NSString *)searchEngineMainPage;
-// Search URL for a query using the default engine (substitutes $0).
+// Search URL for a query using the default engine (full vimb shortcut engine).
 - (NSString *)searchURLForQuery:(NSString *)query;
 - (NSString *)historyCommand;   // config file path (rc)
 - (void)sourceConfigFile;
+// Process an in-memory source/config file body (line splitting + notification
+// dispatch). Shared by sourceConfigFile and tests to avoid touching real data.
+- (void)executeSourceContent:(NSString *)content;
 @end
 
 NS_ASSUME_NONNULL_END
