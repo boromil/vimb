@@ -72,10 +72,16 @@ static const CGFloat kStatusHeight = 24.0;
         window.delegate = self;
         [window center];
         [self newTabInWindow];
-        // Apply dark-mode/fullscreen/show-titlebar from the config on launch.
-        [self applyChromeSettings];
     }
     return self;
+}
+
+// Apply chrome settings (dark-mode/fullscreen/show-titlebar) once the window
+// is loaded and can be safely manipulated, rather than during init before it
+// is shown.
+- (void)windowDidLoad {
+    [super windowDidLoad];
+    [self applyChromeSettings];
 }
 
 - (void)vimbRunCommand:(NSNotification *)note {
