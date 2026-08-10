@@ -62,6 +62,10 @@ static const CGFloat kStatusHeight = 24.0;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(vimbRunCommand:)
                                                      name:@"VimbRunCommand" object:nil];
         [self buildUI];
+        // Put the controller in the window's responder chain so menu actions
+        // (Cmd-W close tab, Cmd-N new tab, back/forward, etc.) always resolve
+        // to this controller regardless of the first responder / page state.
+        window.nextResponder = self;
         window.delegate = self;
         [window center];
         [self newTabInWindow];
