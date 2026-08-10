@@ -11,3 +11,7 @@ macos/Contents/Info.plist
 
 # native build objects
 macos/*.o
+
+# clang coverage artifacts (may land in repo root when test runs from here)
+default.profraw
+coverage.profdata
