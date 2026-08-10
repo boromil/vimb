@@ -32,6 +32,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimNextTab;
 - (void)vimPrevTab;
 - (void)vimGotoTab:(NSUInteger)index;       // g0, g$
+- (void)vimGotoTabFromLast:(NSInteger)count; // NgT (count from last)
 - (void)vimNewTab;
 - (void)vimCloseTab;
 - (void)vimToggleHints;

@@ -409,10 +409,19 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
             [d vimFocusInput];
             return HBResultComplete;
         case 't':
-            [d vimNextTab];
+            if (cnt > 0) {
+                [d vimGotoTab:(NSUInteger)(cnt - 1)];
+            } else {
+                [d vimNextTab];
+            }
             return HBResultComplete;
         case 'T':
-            [d vimPrevTab];
+            if (cnt > 0) {
+                // count tabs backward: from last go back (cnt-1)
+                [d vimGotoTabFromLast:cnt];
+            } else {
+                [d vimPrevTab];
+            }
             return HBResultComplete;
         case '0':
             [d vimGotoTab:0];

@@ -171,7 +171,12 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)closeActiveTab {
     if (self.tabs.count == 0) { return; }
     NSUInteger idx = [self.tabs indexOfObject:self.activeTab];
-    [self.tabs removeObject:self.activeTab];
+    VimbTab *closed = self.activeTab;
+    if (closed.url.absoluteString.length) {
+        [[VimbConfig shared].closedStore push:closed.url.absoluteString
+                                         max:(NSUInteger)[VimbConfig shared].closedMax];
+    }
+    [self.tabs removeObject:closed];
     if (self.tabs.count == 0) {
         [self.window close];
         return;
@@ -469,6 +474,9 @@ static const CGFloat kStatusHeight = 24.0;
         [self updateStatus];
         [self.window makeFirstResponder:view];
     }
+    if (url && url.absoluteString.length && ![url.absoluteString isEqualToString:@"about:blank"]) {
+        [self recordHistory:url.absoluteString];
+    }
 }
 
 - (void)webView:(KeyboardWebView *)view didReceiveMessage:(NSDictionary *)payload {
@@ -577,7 +585,15 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)vimStop { [self.activeTab.webView stopLoading:nil]; }
 - (void)vimOpenURL:(NSString *)urlValue inNewTab:(BOOL)newTab { [self loadURL:urlValue inNewTab:newTab]; }
 - (void)vimOpenHome {
-    NSString *start = [[NSUserDefaults standardUserDefaults] stringForKey:@"startpage"] ?: @"about:blank";
+    // 'U'/'u' reopens the most recently closed page (vimb normal_open).
+    NSString *closed = [[VimbConfig shared].closedStore top];
+    if (closed.length) {
+        [self loadURL:closed inNewTab:NO];
+        [[VimbConfig shared].closedStore removeLine:closed];
+        return;
+    }
+    NSString *start = [[VimbConfig shared].settings objectForKey:@"home-page"];
+    if (![start isKindOfClass:[NSString class]] || !start.length) { start = @"about:blank"; }
     [self loadURL:start inNewTab:NO];
 }
 - (void)vimSearch:(NSString *)query forward:(BOOL)forward {
@@ -641,6 +657,11 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)vimGotoTab:(NSUInteger)index {
     if (index == NSNotFound) { [self selectTabAtIndex:self.tabs.count - 1]; }
     else { [self selectTabAtIndex:index]; }
+}
+- (void)vimGotoTabFromLast:(NSInteger)count {
+    NSUInteger last = self.tabs.count - 1;
+    NSUInteger idx = (count > 1) ? (NSUInteger)MAX(0, (NSInteger)last - (count - 1)) : last;
+    [self selectTabAtIndex:idx];
 }
 - (void)vimNewTab { [self newTabInWindow]; }
 - (void)vimCloseTab { [self closeActiveTab]; }
