@@ -30,6 +30,25 @@
             if (self.vbDelegate) [self.vbDelegate commandFieldDeleteWord:self];
             return;
         }
+        // Command-line cursor/editing keys (ex_keypress parity).
+        if (c == 'b') { // Ctrl-B: cursor to beginning
+            NSText *ed = self.currentEditor;
+            if (ed) { [ed setSelectedRange:NSMakeRange(0, 0)]; }
+            return;
+        }
+        if (c == 'e') { // Ctrl-E: cursor to end
+            NSText *ed = self.currentEditor;
+            if (ed) { [ed setSelectedRange:NSMakeRange(ed.string.length, 0)]; }
+            return;
+        }
+        if (c == 'u') { // Ctrl-U: delete everything before the cursor
+            NSText *ed = self.currentEditor;
+            if (ed && ed.selectedRange.location != NSNotFound) {
+                NSUInteger loc = ed.selectedRange.location;
+                [ed replaceCharactersInRange:NSMakeRange(0, loc) withString:@""];
+            }
+            return;
+        }
     }
     [super keyDown:event];
 }
