@@ -1,5 +1,6 @@
 #import "VimbAppDelegate.h"
 #import "VimbConfig.h"
+#import "VimbMenu.h"
 
 @interface VimbAppDelegate () <NSApplicationDelegate>
 @end
@@ -19,6 +20,7 @@
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    NSApp.mainMenu = [VimbMenu mainMenu];
     [self newWindowForCommandLineArguments];
     // Source the user rc file; commands are routed to the commands' listener.
     dispatch_async(dispatch_get_main_queue(), ^{

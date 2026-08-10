@@ -37,6 +37,7 @@ static const CGFloat kStatusHeight = 24.0;
                     backing:NSBackingStoreBuffered
                       defer:NO];
     window.title = @"vimb";
+    window.titlebarAppearsTransparent = NO;
     window.tabbingMode = NSWindowTabbingModeDisallowed;
     window.minSize = NSMakeSize(640, 400);
 
@@ -101,46 +102,48 @@ static const CGFloat kStatusHeight = 24.0;
         [self.tabBar.topAnchor constraintEqualToAnchor:tabHost.topAnchor],
         [self.tabBar.bottomAnchor constraintEqualToAnchor:tabHost.bottomAnchor],
     ]];
-    NSButton *newBtn = [NSButton buttonWithTitle:@"+" target:self action:@selector(newTabAction:)];
+    NSButton *newBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:@"New Tab"]
+                                          target:self action:@selector(newTabAction:)];
+    newBtn.bezelStyle = NSBezelStyleTexturedRounded;
+    newBtn.imagePosition = NSImageOnly;
     [self.tabBar addArrangedSubview:newBtn];
 
     [v addArrangedSubview:tabHost];
 
-    // Web container
+    // Web container fills the remaining height.
     self.webContainer = [[NSView alloc] init];
     self.webContainer.translatesAutoresizingMaskIntoConstraints = NO;
     [v addArrangedSubview:self.webContainer];
 
-    // Status + command line
+    // Command line + status: a transient chrome-free overlay pinned to the
+    // bottom of the web container. It is hidden by default and appears only
+    // while a command/search is typed or a short status message is shown,
+    // matching both macOS HIG (no persistent status bar) and vimb's spare UI.
+    self.commandField = [[NSTextField alloc] init];
+    self.commandField.delegate = self;
+    self.commandField.font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
+    self.commandField.bezelStyle = NSTextFieldRoundedBezel;
+    self.commandField.controlSize = NSControlSizeSmall;
+    self.commandField.alphaValue = 0.0;
+    self.commandField.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.webContainer addSubview:self.commandField];
+
     self.statusField = [NSTextField labelWithString:@""];
     self.statusField.font = [NSFont systemFontOfSize:12];
     self.statusField.textColor = [NSColor secondaryLabelColor];
     self.statusField.lineBreakMode = NSLineBreakByTruncatingTail;
     self.statusField.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.webContainer addSubview:self.statusField];
 
-    self.commandField = [[NSTextField alloc] init];
-    self.commandField.delegate = self;
-    self.commandField.font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
-    self.commandField.hidden = YES;
-    self.commandField.translatesAutoresizingMaskIntoConstraints = NO;
-
-    NSStackView *status = [NSStackView stackViewWithViews:@[self.statusField, self.commandField]];
-    status.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    status.spacing = 8;
-    status.translatesAutoresizingMaskIntoConstraints = NO;
-    NSView *statusHost = [[NSView alloc] init];
-    statusHost.translatesAutoresizingMaskIntoConstraints = NO;
-    [statusHost addSubview:status];
     [NSLayoutConstraint activateConstraints:@[
-        [status.leadingAnchor constraintEqualToAnchor:statusHost.leadingAnchor constant:8],
-        [status.trailingAnchor constraintEqualToAnchor:statusHost.trailingAnchor constant:-8],
-        [status.topAnchor constraintEqualToAnchor:statusHost.topAnchor],
-        [status.bottomAnchor constraintEqualToAnchor:statusHost.bottomAnchor],
+        [self.commandField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:10],
+        [self.commandField.trailingAnchor constraintLessThanOrEqualToAnchor:self.webContainer.trailingAnchor constant:-120],
+        [self.commandField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-8],
+        [self.commandField.heightAnchor constraintEqualToConstant:kStatusHeight],
+        [self.statusField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:12],
+        [self.statusField.trailingAnchor constraintLessThanOrEqualToAnchor:self.webContainer.trailingAnchor constant:-12],
+        [self.statusField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-4],
     ]];
-    NSLayoutConstraint *sh = [statusHost.heightAnchor constraintEqualToConstant:kStatusHeight];
-    sh.priority = NSLayoutPriorityRequired;
-    [NSLayoutConstraint activateConstraints:@[sh]];
-    [v addArrangedSubview:statusHost];
 
     // Fill: webContainer expands.
     [v setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
@@ -468,11 +471,36 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)showMessage:(NSString *)message error:(BOOL)error {
     self.statusField.stringValue = message ?: @"";
     self.statusField.textColor = error ? [NSColor systemRedColor] : [NSColor secondaryLabelColor];
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.15;
+        self.statusField.alphaValue = 1.0;
+    } completionHandler:nil];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if ([self.statusField.stringValue isEqualToString:message]) {
+            [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+                ctx.duration = 0.2;
+                self.statusField.alphaValue = 0.0;
+            } completionHandler:nil];
             self.statusField.stringValue = @"";
         }
     });
+}
+
+- (void)showCommandLine {
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.15;
+        self.commandField.alphaValue = 1.0;
+    } completionHandler:^{
+        [self.window makeFirstResponder:self.commandField];
+    }];
+}
+
+- (void)hideCommandLine {
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.12;
+        self.commandField.alphaValue = 0.0;
+    } completionHandler:nil];
+    if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
 }
 
 - (void)updateStatus {
@@ -571,7 +599,7 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode {
     if (mode == VimModeHint) {
         // Hint mode keeps the webview focused so hint keys route to JS.
-        self.commandField.hidden = YES;
+        [self.commandField.animator setAlphaValue:0.0];
         if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
         return;
     }
@@ -583,8 +611,7 @@ static const CGFloat kStatusHeight = 24.0;
         self.commandField.stringValue = @"";
     }
     self.commandField.placeholderString = [prompt isEqualToString:@":"] ? @"command" : @"search";
-    self.commandField.hidden = NO;
-    [self.window makeFirstResponder:self.commandField];
+    [self showCommandLine];
 }
 
 #pragma mark - VimDelegate
@@ -668,7 +695,7 @@ static const CGFloat kStatusHeight = 24.0;
     [self loadURL:resStr inNewTab:NO];
 }
 - (void)vimSearch:(NSString *)query forward:(BOOL)forward {
-    self.commandField.hidden = YES;
+    [self.commandField.animator setAlphaValue:0.0];
     [self.activeTab.webView findString:query forwardDirection:forward];
     [self showMessage:[NSString stringWithFormat:@"Search: %@", query] error:NO];
 }
@@ -751,7 +778,7 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error { [self showMessage:message error:error]; }
 - (void)vimFocusWebView {
     if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
-    self.commandField.hidden = YES;
+    [self.commandField.animator setAlphaValue:0.0];
 }
 
 #pragma mark - Command field (NSTextFieldDelegate)
@@ -771,7 +798,7 @@ static const CGFloat kStatusHeight = 24.0;
         if (commandSelector == @selector(insertNewline:)) {
             NSString *line = self.commandField.stringValue;
             VimMode m = self.vim.mode;
-            self.commandField.hidden = YES;
+            [self.commandField.animator setAlphaValue:0.0];
             if (m == VimModeCommand) { [self commandLineExecuted:line]; }
             else if (m == VimModeSearch) { [self.vim commandLineCommitted:line]; }
             [self.vim reset];
@@ -779,7 +806,7 @@ static const CGFloat kStatusHeight = 24.0;
             return YES;
         }
         if (commandSelector == @selector(cancelOperation:)) {
-            self.commandField.hidden = YES;
+            [self.commandField.animator setAlphaValue:0.0];
             [self.vim reset];
             [self.window makeFirstResponder:self.activeTab.view];
             return YES;
@@ -914,6 +941,24 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)applyCompletion:(NSString *)prefix appendTo:(NSString *)edited value:(NSString *)value {
     self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", prefix, value];
     (void)edited;
+}
+
+#pragma mark - Menu / responder actions
+
+- (void)newTab:(id)sender { [self newTabInWindow]; }
+- (void)closeTab:(id)sender { [self closeActiveTab]; }
+- (void)goBack:(id)sender { [self goBack]; }
+- (void)goForward:(id)sender { [self goForward]; }
+- (void)reloadPage:(id)sender { [self reloadPage]; }
+- (void)stopLoading:(id)sender { [self.activeTab.webView stopLoading:nil]; }
+- (void)zoomIn:(id)sender {
+    self.activeTab.webView.magnification = self.activeTab.webView.magnification + 0.1;
+}
+- (void)zoomOut:(id)sender {
+    self.activeTab.webView.magnification = MAX(0.5, self.activeTab.webView.magnification - 0.1);
+}
+- (void)actualSize:(id)sender {
+    self.activeTab.webView.magnification = 1.0;
 }
 
 @end
