@@ -46,6 +46,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimYankURI;                         // y/Y
 - (void)vimSetMark:(unichar)c;              // m<char>
 - (void)vimJumpMark:(unichar)c;             // '<char>
+- (void)vimViewSource;                      // gf/gF
 - (void)vimZoom:(BOOL)in;
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count;  // ^A / ^X
 - (void)vimQuit;                            // ^Q

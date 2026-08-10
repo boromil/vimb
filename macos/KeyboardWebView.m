@@ -71,6 +71,20 @@ static NSString *const GVimJS =
     config.preferences = [[WKPreferences alloc] init];
     config.websiteDataStore = [WKWebsiteDataStore defaultDataStore];
 
+    // Apply the webkit-settable settings from vimb's setting registry.
+    VimbConfig *cfg = [VimbConfig shared];
+    WKPreferences *prefs = config.preferences;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    prefs.javaScriptEnabled = [cfg getBool:@"scripts" defaultValue:YES];
+#pragma clang diagnostic pop
+    prefs.javaScriptCanOpenWindowsAutomatically = [cfg getBool:@"javascript-can-open-windows-automatically" defaultValue:NO];
+    if ([cfg getBool:@"webinspector" defaultValue:NO]) {
+        [prefs setValue:@YES forKey:@"developerExtrasEnabled"];
+    }
+    [prefs setValue:@([cfg getInt:@"font-size" defaultValue:16]) forKey:@"minimumFontSize"];
+    [prefs setValue:@([cfg getInt:@"font-size" defaultValue:16]) forKey:@"defaultFontSize"];
+
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
     WKUserScript *script = [[WKUserScript alloc] initWithSource:GVimJS
                                                  injectionTime:WKUserScriptInjectionTimeAtDocumentStart

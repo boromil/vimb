@@ -454,7 +454,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
             return HBResultComplete;
         case 'f':
         case 'F':
-            [self showUnsupported:@"view source" d:d];
+            [d vimViewSource];
             return HBResultComplete;
         case 'u': case 'U':
             [d vimGoHomeURL];

@@ -765,6 +765,42 @@ static const CGFloat kStatusHeight = 24.0;
     // Focus the web view so page keys are received.
     [self.window makeFirstResponder:self.activeTab.view];
 }
+- (void)vimViewSource {
+    NSString *uri = self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString ?: @"";
+    NSURL *url = [NSURL URLWithString:uri];
+    if (!url) { [self showMessage:@"cannot view source" error:YES]; return; }
+    __weak typeof(self) weakSelf = self;
+    [[[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        (void)resp;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (err || !data) {
+                [weakSelf showMessage:[@"view source failed: " stringByAppendingString:err ? err.localizedDescription : @""] error:YES];
+                return;
+            }
+            NSString *html = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: [NSString stringWithFormat:@"%lu bytes (non-UTF8)", (unsigned long)data.length];
+            NSString *escaped = [self escapeHTML:html];
+            NSString *display = [NSString stringWithFormat:
+                @"<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+                @"body{font:12px Menlo,monospace;white-space:pre-wrap;word-wrap:break-word;"
+                @"padding:16px;margin:0;}</style></head><body>%@</body></html>", escaped];
+            [weakSelf openViewSourceTabWithHTML:display];
+        });
+    }] resume];
+}
+
+- (void)openViewSourceTabWithHTML:(NSString *)html {
+    [self newTabInWindow];
+    [self.activeTab.webView loadHTMLString:html baseURL:nil];
+}
+
+- (NSString *)escapeHTML:(NSString *)s {
+    NSMutableString *out = [s mutableCopy];
+    [out replaceOccurrencesOfString:@"&" withString:@"&amp;" options:0 range:NSMakeRange(0, out.length)];
+    [out replaceOccurrencesOfString:@"<" withString:@"&lt;" options:0 range:NSMakeRange(0, out.length)];
+    [out replaceOccurrencesOfString:@">" withString:@"&gt;" options:0 range:NSMakeRange(0, out.length)];
+    return out;
+}
+
 - (void)vimYankURI {
     NSString *url = self.activeTab.url.absoluteString ?: @"";
     [self.registers set:url forKey:'"'];
