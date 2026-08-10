@@ -29,7 +29,8 @@ SRCS := main.m \
         VimbEx.m \
         VimbMenu.m \
         VimbAutocmd.m \
-        VimbCommandField.m
+        VimbCommandField.m \
+        VimbWindow.m
 
 OBJS := $(SRCS:.m=.o)
 

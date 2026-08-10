@@ -5,6 +5,7 @@
 #import "VimbConfig.h"
 #import "VimbEngine.h"
 #import "VimbCommandField.h"
+#import "VimbWindow.h"
 
 static const CGFloat kStatusHeight = 24.0;
 
@@ -34,7 +35,7 @@ static const CGFloat kStatusHeight = 24.0;
 @implementation BrowserWindowController
 
 - (instancetype)init {
-    NSWindow *window = [[NSWindow alloc]
+    NSWindow *window = [[VimbWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, 1100, 760)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
