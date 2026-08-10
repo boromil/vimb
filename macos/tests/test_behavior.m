@@ -12,6 +12,7 @@
 #import "VimbEngine.h"
 #import "VimbAutocmd.h"
 #import "VimbHandler.h"
+#import "VimbEditor.h"
 #import "VimbHintEngine.h"
 
 #pragma mark - Shared spies
@@ -61,6 +62,7 @@ static NSString *S(unichar c) {
 - (void)vimEnterPassThrough { [self record:@"passthrough"]; }
 - (void)vimYankURI { [self record:@"yank"]; }
 - (void)vimYankSelection { [self record:@"yankselection"]; }
+- (void)vimOpenEditor { [self record:@"editor"]; }
 - (void)vimSetMark:(unichar)c { [self record:[NSString stringWithFormat:@"setmark:%C", c]]; }
 - (void)vimJumpMark:(unichar)c { [self record:[NSString stringWithFormat:@"jumpmark:%C", c]]; }
 - (void)vimViewSource { [self record:@"viewsource"]; }
@@ -661,6 +663,32 @@ static void test_ex_abbreviation_resolution(void) {
 
 #pragma mark - VimbHandler (parity: src/handler.c)
 
+static void test_editor_round_trip(void) {
+    // Edit "initial text" with a blocking editor that writes back a known
+    // result: `printf 'edited' > "$1"`. It receives the temp file as argv
+    // (not %s substitution here -> appended). Wait a bit for the async
+    // completion via the run loop.
+    VimbEditor *ed = [[VimbEditor alloc] init];
+    __block NSString *result = nil;
+    __block BOOL fired = NO;
+    // Use a shell editor that rewrites the file: with %s substitution.
+    BOOL ok = [ed editText:@"initial"
+            editorCommand:@"/usr/bin/env sh -c 'printf edited > \"$1\"' -- %s"
+                completion:^(NSString *edited, NSString *path) {
+                    (void)path;
+                    result = edited;
+                    fired = YES;
+                }];
+    TEST_ASSERT_TRUE(ok == YES);
+    // Pump the run loop until the async completion fires (bounded).
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3.0];
+    while (!fired && [deadline timeIntervalSinceNow] > 0) {
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    TEST_ASSERT_TRUE(fired == YES);
+    TEST_ASSERT_EQ_STR(result, @"edited");
+}
+
 static void test_download_directory_setting(void) {
     // download-path default falls back to non-empty; a custom path is honored.
     VimbConfig *c = [[VimbConfig alloc] init];
@@ -833,6 +861,11 @@ static void test_controller_one_shot_normal(void) {
     vc.oneShotNormal = NO;
     TEST_ASSERT_TRUE([vc handlePageEditableKeyCode:(int)'a' modifiers:0 characters:@"a"] == NO);
     TEST_ASSERT_TRUE(vc.oneShotNormal == NO);
+
+    // Ctrl-T opens the external editor for the focused field.
+    [spy.calls removeAllObjects];
+    TEST_ASSERT_TRUE([vc handlePageEditableKeyCode:(int)'T' modifiers:(1UL<<18) characters:@"T"] == YES);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"editor"] == YES);
 }
 
 static void test_controller_search_dir_and_count(void) {
@@ -1359,6 +1392,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_user_script_style_gating);
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
+    RUN_TEST(test_editor_round_trip);
 
     RUN_TEST(test_ex_every_type);
     RUN_TEST(test_ex_tabcmd);

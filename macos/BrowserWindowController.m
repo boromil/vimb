@@ -7,6 +7,7 @@
 #import "VimbHintEngine.h"
 #import "VimbCommandField.h"
 #import "VimbWindow.h"
+#import "VimbEditor.h"
 
 static const CGFloat kStatusHeight = 24.0;
 
@@ -1155,6 +1156,37 @@ static const CGFloat kStatusHeight = 24.0;
     [out replaceOccurrencesOfString:@"<" withString:@"&lt;" options:0 range:NSMakeRange(0, out.length)];
     [out replaceOccurrencesOfString:@">" withString:@"&gt;" options:0 range:NSMakeRange(0, out.length)];
     return out;
+}
+
+- (void)vimOpenEditor {
+    // Ctrl-T / ;e: edit the focused text field with the external editor.
+    NSString *cmd = [[VimbConfig shared] getString:@"editor-command" defaultValue:@"/usr/bin/open -t '%s'"];
+    if (cmd.length == 0) { [self showMessage:@"no editor-command configured" error:YES]; return; }
+    __weak typeof(self) weakSelf = self;
+    [self.activeTab.webView evaluateJavaScript:
+        @"(window.vimb_input_mode_element && window.vimb_input_mode_element.value) ? "
+        @"window.vimb_input_mode_element.value : ''"
+        completionHandler:^(id result, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (error) { [weakSelf showMessage:@"could not read field" error:YES]; return; }
+                NSString *initial = ([result isKindOfClass:[NSString class]] ? result : @"");
+                VimbEditor *ed = [[VimbEditor alloc] init];
+                BOOL ok = [ed editText:initial editorCommand:cmd completion:^(NSString *edited, NSString *path) {
+                    (void)path;
+                    if (edited == nil) { edited = @""; }
+                    // Write the edited text back to the focused field.
+                    NSString *escaped = [edited stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
+                    escaped = [escaped stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
+                    escaped = [escaped stringByReplacingOccurrencesOfString:@"'" withString:@"\\'"];
+                    NSString *js = [NSString stringWithFormat:
+                        @"if(window.vimb_input_mode_element){window.vimb_input_mode_element.value='%@';}",
+                        escaped];
+                    [weakSelf.activeTab.webView evaluateJavaScript:js completionHandler:nil];
+                    [weakSelf showMessage:@"edited" error:NO];
+                }];
+                if (!ok) { [weakSelf showMessage:@"editor failed to launch" error:YES]; }
+            });
+        }];
 }
 
 - (void)vimYankURI {

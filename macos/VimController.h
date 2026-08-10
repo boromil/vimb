@@ -48,6 +48,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimEnterPassThrough;                // ^Z
 - (void)vimYankURI;                         // y
 - (void)vimYankSelection;                   // Y: yank page selection
+- (void)vimOpenEditor;                      // Ctrl-T in input / ;e hint: edit focused field
 - (void)vimSetMark:(unichar)c;              // m<char>
 - (void)vimJumpMark:(unichar)c;             // '<char>
 - (void)vimViewSource;                      // gf/gF

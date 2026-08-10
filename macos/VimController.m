@@ -78,6 +78,12 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         self.oneShotNormal = YES;
         return YES;
     }
+    // Ctrl-T opens the external editor for the focused field (input.c).
+    if ((mods & 1UL << 18) != 0 && keyCode == (int)'T') {
+        id<VimDelegate> d = self.delegate;
+        if (d && [d respondsToSelector:@selector(vimOpenEditor)]) { [d vimOpenEditor]; }
+        return YES;
+    }
     // ESC is handled by the UI (blur); everything else goes to the page.
     return NO;
 }

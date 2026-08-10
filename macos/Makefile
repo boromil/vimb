@@ -32,6 +32,7 @@ SRCS := main.m \
         VimbCommandField.m \
         VimbWindow.m \
         VimbHandler.m \
+        VimbEditor.m \
         VimbHintEngine.m
 
 OBJS := $(SRCS:.m=.o)
@@ -89,6 +90,7 @@ TEST_SRCS := \
         VimbAutocmd.m \
         VimController.m \
         VimbHandler.m \
+        VimbEditor.m \
         VimbHintEngine.m
 
 TEST_OBJS := $(patsubst %.m,tests/%.o,$(TEST_SRCS))
