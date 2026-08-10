@@ -10,6 +10,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)commandField:(VimbCommandField *)field requestedHistory:(NSInteger)direction; // -1 prev, +1 next
 - (void)commandFieldRequestedCancel:(VimbCommandField *)field;
 - (void)commandFieldDeleteWord:(VimbCommandField *)field;
+// Ctrl-R then a register char: return the register's content to insert.
+- (nullable NSString *)commandField:(VimbCommandField *)field registerContentForKey:(unichar)key;
 @end
 
 @interface VimbCommandField : NSTextField

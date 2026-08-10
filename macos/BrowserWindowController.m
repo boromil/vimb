@@ -1391,6 +1391,14 @@ static const CGFloat kStatusHeight = 24.0;
     if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
 }
 
+- (nullable NSString *)commandField:(VimbCommandField *)field registerContentForKey:(unichar)key {
+    NSString *v = [self.registers get:key];
+    if (v) { return v; }
+    // Fall back to the default register (").
+    if (key == '"') { return [self.registers get:'"']; }
+    return nil;
+}
+
 - (void)commandFieldDeleteWord:(VimbCommandField *)field {
     // Delete the word before the cursor.
     NSText *editor = [field currentEditor];

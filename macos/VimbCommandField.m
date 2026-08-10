@@ -1,6 +1,8 @@
 #import "VimbCommandField.h"
 
-@implementation VimbCommandField
+@implementation VimbCommandField {
+    BOOL _registerMode;
+}
 
 - (BOOL)isOpaque { return NO; }
 
@@ -8,6 +10,22 @@
     NSEventModifierFlags mods = event.modifierFlags;
     BOOL ctrl = (mods & NSEventModifierFlagControl) != 0;
     NSString *chars = event.charactersIgnoringModifiers;
+
+    // Ctrl-R register-insert mode: the next printable key names a register
+    // whose content is inserted at the cursor (ex_keypress PHASE_REG).
+    if (_registerMode) {
+        _registerMode = NO;
+        if (chars.length == 1) {
+            unichar k = [chars characterAtIndex:0];
+            NSString *content = [self.vbDelegate commandField:self registerContentForKey:k];
+            if (content) {
+                NSText *ed = self.currentEditor;
+                if (ed) { [ed replaceCharactersInRange:ed.selectedRange withString:content]; }
+            }
+        }
+        return;
+    }
+
     if (ctrl && chars.length == 1) {
         unichar c = [chars characterAtIndex:0];
         if (c == '[') {
@@ -16,6 +34,10 @@
         }
         if (c == 'c') {
             if (self.vbDelegate) [self.vbDelegate commandFieldRequestedCancel:self];
+            return;
+        }
+        if (c == 'r') {
+            _registerMode = YES;
             return;
         }
         if (c == 'p') {
