@@ -227,6 +227,26 @@ static NSString *const GVimJS =
 
 #pragma mark - Navigation
 
+// Hand off URLs for schemes with a registered external handler (e.g.
+// "mailto:", "tel:") instead of trying to load them, matching handler.c.
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction
+    decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    NSURL *url = navigationAction.request.URL;
+    NSString *scheme = url.scheme.lowercaseString;
+    static NSSet<NSString *> *internal = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        internal = [NSSet setWithArray:@[@"http", @"https", @"file", @"about", @"data",
+                                          @"javascript", @"ws", @"wss", @"blob"]];
+    });
+    if (scheme && ![internal containsObject:scheme]
+        && [[VimbConfig shared].handler handleURI:url.absoluteString]) {
+        decisionHandler(WKNavigationActionPolicyCancel);
+        return;
+    }
+    decisionHandler(WKNavigationActionPolicyAllow);
+}
+
 - (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)nav {
     NSString *uri = self.URL.absoluteString ?: @"";
     [[VimbConfig shared].autocmd fireEvent:VAuLoadStarting uri:uri];

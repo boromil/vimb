@@ -11,6 +11,7 @@
 #import "VimbEx.h"
 #import "VimbEngine.h"
 #import "VimbAutocmd.h"
+#import "VimbHandler.h"
 
 #pragma mark - Shared spies
 
@@ -634,6 +635,40 @@ static void test_ex_ambiguous_command(void) {
     TEST_ASSERT_TRUE(ex != nil);
 }
 
+#pragma mark - VimbHandler (parity: src/handler.c)
+
+static void test_handler_add_remove_lookup(void) {
+    VimbHandler *h = [[VimbHandler alloc] init];
+    // add
+    TEST_ASSERT_TRUE([h addScheme:@"mailto" command:@"open -a Mail %s"]);
+    TEST_ASSERT_EQ_STR([h commandForURI:@"mailto:foo@bar.com"],
+                       @"open -a Mail %s");
+    // schemes listed
+    TEST_ASSERT_TRUE([h.schemes containsObject:@"mailto"]);
+    // remove
+    TEST_ASSERT_TRUE([h removeScheme:@"mailto"]);
+    TEST_ASSERT_TRUE([h commandForURI:@"mailto:foo@bar.com"] == nil);
+    TEST_ASSERT_TRUE([h removeScheme:@"mailto"] == NO); // already gone
+}
+
+static void test_handler_scheme_no_colon(void) {
+    VimbHandler *h = [[VimbHandler alloc] init];
+    TEST_ASSERT_TRUE([h addScheme:@"x" command:@"echo %s"]);
+    // No colon -> no scheme -> nil command.
+    TEST_ASSERT_TRUE([h commandForURI:@"http-nowhere"] == nil);
+    // Different scheme not registered.
+    TEST_ASSERT_TRUE([h commandForURI:@"tel:123"] == nil);
+}
+
+static void test_handler_handle_uri_returns(void) {
+    VimbHandler *h = [[VimbHandler alloc] init];
+    // No handler registered -> handleURI returns NO (load proceeds).
+    TEST_ASSERT_TRUE([h handleURI:@"mailto:x@y"] == NO);
+    // Register a harmless handler; handleURI returns YES.
+    TEST_ASSERT_TRUE([h addScheme:@"vhb" command:@"/usr/bin/true %s"]);
+    TEST_ASSERT_TRUE([h handleURI:@"vhb:xyz"] == YES);
+}
+
 #pragma mark - VimController coverage
 
 static void test_controller_invoke_handlers(void) {
@@ -1092,6 +1127,10 @@ int run_behavior_main(void) {
     RUN_TEST(test_autocmd_remove_and_group);
     RUN_TEST(test_autocmd_missing_command);
     RUN_TEST(test_autocmd_wildcard_patterns);
+
+    RUN_TEST(test_handler_add_remove_lookup);
+    RUN_TEST(test_handler_scheme_no_colon);
+    RUN_TEST(test_handler_handle_uri_returns);
 
     RUN_TEST(test_ex_every_type);
     RUN_TEST(test_ex_tabcmd);

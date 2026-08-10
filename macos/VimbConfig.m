@@ -37,6 +37,7 @@ static const NSString *COOKIE_ACCEPT = @"ask";
         _closedStore = [[VimbStorage alloc] initWithName:@"closed"];
         _queueStore = [[VimbStorage alloc] initWithName:@"queue"];
         _autocmd = [[VimbAutocmd alloc] init];
+        _handler = [[VimbHandler alloc] init];
         _mappings = [@{ @"n": [NSMutableArray array],
                         @"i": [NSMutableArray array],
                         @"c": [NSMutableArray array] } mutableCopy];

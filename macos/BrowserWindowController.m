@@ -479,6 +479,60 @@ static const CGFloat kStatusHeight = 24.0;
         [self showMessage:[@"shell launch failed: " stringByAppendingString:launchErr.localizedDescription] error:YES];
     }
 }
+- (void)exClearData:(NSString *)arg {
+    // :cleardata [types] or by default all types (port of ex_cleardata).
+    WKWebsiteDataStore *store = [WKWebsiteDataStore defaultDataStore];
+    NSSet<NSString *> *types;
+    NSArray<NSString *> *wanted = [arg componentsSeparatedByString:@","];
+    if (arg.length == 0 || [arg isEqualToString:@"-"]) {
+        types = [NSSet setWithArray:@[
+            WKWebsiteDataTypeCookies,
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+            WKWebsiteDataTypeLocalStorage,
+            WKWebsiteDataTypeSessionStorage,
+            WKWebsiteDataTypeIndexedDBDatabases,
+        ]];
+    } else {
+        NSMutableSet *m = [NSMutableSet set];
+        NSDictionary<NSString *, NSString *> *map = @{
+            @"cookies": WKWebsiteDataTypeCookies,
+            @"disk-cache": WKWebsiteDataTypeDiskCache,
+            @"memory-cache": WKWebsiteDataTypeMemoryCache,
+            @"local-storage": WKWebsiteDataTypeLocalStorage,
+            @"session-storage": WKWebsiteDataTypeSessionStorage,
+            @"indexeddb-databases": WKWebsiteDataTypeIndexedDBDatabases,
+            @"all": WKWebsiteDataTypeCookies,
+        };
+        for (NSString *t in wanted) {
+            NSString *k = [t stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if (map[k]) {
+                if ([k isEqualToString:@"all"]) {
+                    [m addObjectsFromArray:@[WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache,
+                        WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeLocalStorage,
+                        WKWebsiteDataTypeSessionStorage, WKWebsiteDataTypeIndexedDBDatabases]];
+                } else {
+                    [m addObject:map[k]];
+                }
+            }
+        }
+        types = m;
+    }
+    __weak typeof(self) weakSelf = self;
+    [store removeDataOfTypes:types modifiedSince:[NSDate distantPast]
+        completionHandler:^{
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf showMessage:[NSString stringWithFormat:@"cleared %lu data type(s)", (unsigned long)types.count] error:NO];
+            });
+        }];
+}
+- (void)exPrint {
+    // :hardcopy opens the system print dialog for the current page.
+    WKWebView *wv = self.activeTab.webView;
+    NSPrintOperation *op = [wv printOperationWithPrintInfo:[NSPrintInfo sharedPrintInfo]];
+    op.showsPrintPanel = YES;
+    [op runOperation];
+}
 - (void)exMessage:(NSString *)msg error:(BOOL)error {
     if (msg.length) { [self showMessage:msg error:error]; }
 }

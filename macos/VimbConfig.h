@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "VimbStorage.h"
 #import "VimbAutocmd.h"
+#import "VimbHandler.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -17,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, strong) VimbStorage *closedStore;
 @property(nonatomic, strong) VimbStorage *queueStore;
 @property(nonatomic, strong) VimbAutocmd *autocmd;
+@property(nonatomic, strong) VimbHandler *handler;
 @property(nonatomic, assign) NSInteger scrollstep;
 @property(nonatomic, assign) NSInteger historyMax;
 @property(nonatomic, assign) NSInteger closedMax;
