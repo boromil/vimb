@@ -176,7 +176,7 @@ static NSString *const GVimJS =
 
 - (void)keyDown:(NSEvent *)event {
     VimController *vim = [self.vbDelegate vimControllerForView:self];
-    if (_editableFocusActive) {
+    if (vim && [vim shouldPassKeysToPage:_editableFocusActive]) {
         // A text input is focused: allow typing to reach the page. ESC blurs
         // the field and returns to vim normal mode.
         NSString *cs = event.charactersIgnoringModifiers;
@@ -242,6 +242,12 @@ static NSString *const GVimJS =
         [self scrollToY:_pendingMarkY];
         _pendingMarkY = 0;
     }
+    // Start each page in vim normal mode (mirrors vimb vb_enter('n') on load):
+    // drop any page-editable focus so keys route to the vim engine even if the
+    // page autofocused a search/input field.
+    _editableFocusActive = NO;
+    [self evaluateJavaScript:@"(()=>{const e=document.activeElement;if(e&&(e.isContentEditable||/^(INPUT|TEXTAREA)$/.test(e.tagName)))e.blur();})()"
+            completionHandler:nil];
     NSString *uri = self.URL.absoluteString ?: @"";
     [[VimbConfig shared].autocmd fireEvent:VAuLoadFinished uri:uri];
     id<KeyboardWebViewDelegate> d = self.vbDelegate;

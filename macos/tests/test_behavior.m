@@ -670,6 +670,28 @@ static void test_controller_invoke_handlers(void) {
     feed(vc, @"*"); TEST_ASSERT_TRUE([spy.calls containsObject:@"searchsel:1"]);
 }
 
+static void test_controller_pass_keys_to_page(void) {
+    BehavSpy *spy = newSpy();
+    VimController *vc = newVc(spy);
+
+    // No page editable focus -> always vim handles keys.
+    TEST_ASSERT_TRUE([vc shouldPassKeysToPage:NO] == NO);
+
+    // Page editable focus + normal mode -> keys go to the page (input).
+    vc.mode = VimModeNormal;
+    TEST_ASSERT_TRUE([vc shouldPassKeysToPage:YES] == YES);
+
+    // But in command/search/hint modes vim keeps the keys even if focused.
+    vc.mode = VimModeCommand;
+    TEST_ASSERT_TRUE([vc shouldPassKeysToPage:YES] == NO);
+    vc.mode = VimModeSearch;
+    TEST_ASSERT_TRUE([vc shouldPassKeysToPage:YES] == NO);
+    vc.mode = VimModeHint;
+    TEST_ASSERT_TRUE([vc shouldPassKeysToPage:YES] == NO);
+    vc.mode = VimModePassThrough;
+    TEST_ASSERT_TRUE([vc shouldPassKeysToPage:YES] == NO);
+}
+
 static void test_controller_search_dir_and_count(void) {
     BehavSpy *spy = newSpy();
     VimController *vc = newVc(spy);
@@ -1080,6 +1102,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_ex_ambiguous_command);
 
     RUN_TEST(test_controller_invoke_handlers);
+    RUN_TEST(test_controller_pass_keys_to_page);
     RUN_TEST(test_controller_search_dir_and_count);
     RUN_TEST(test_controller_marks);
     RUN_TEST(test_controller_cmdline_and_input_open);

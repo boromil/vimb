@@ -57,6 +57,10 @@ typedef NS_ENUM(NSInteger, VimMode) {
 @property(nonatomic, assign) VimMode mode;
 @property(nonatomic, weak, nullable) id<VimDelegate> delegate;
 - (void)reset;
+// Whether a key should be handed to the page (true) vs processed by vim mode
+// (false), given whether a page text field currently holds focus. Mirrors
+// vimb's normal-vs-input mode split.
+- (BOOL)shouldPassKeysToPage:(BOOL)pageEditableActive;
 // Returns YES if the key was consumed by vim mode.
 - (BOOL)handleKeyDown:(NSEvent *)event inWebView:(BOOL)inWebView;
 // Foundation-only core of handleKeyDown:. The UI extracts the event's

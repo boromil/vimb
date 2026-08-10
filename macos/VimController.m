@@ -49,6 +49,14 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 
 @implementation VimController
 
+- (BOOL)shouldPassKeysToPage:(BOOL)pageEditableActive {
+    if (!pageEditableActive) { return NO; }
+    // Only normal-mode pages let the field take the keys; while typing in the
+    // command line/search or hinting, vim keeps the keys.
+    if (self.mode != VimModeNormal) { return NO; }
+    return YES;
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
