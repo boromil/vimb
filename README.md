@@ -95,6 +95,23 @@ target.
 
     make runsandbox
 
+## macOS (native)
+
+On macOS vimb is built against Apple's native WebKit and AppKit frameworks
+rather than GTK/WebKitGTK (which cannot be built on macOS). The build selects
+this automatically, so the same make targets work:
+
+    make             # build vimb.app
+    make runsandbox  # build and open vimb.app
+
+The native backend lives in `macos/` and is a faithful Objective-C + WKWebView
+port of the vim-mode engine (normal mode, ex commands, settings, registers,
+marks, history, bookmarks, hint modes). Settings and history are stored under
+`~/Library/Application Support/vimb` and the rc config file is sourced from
+there on startup.
+
+On every other platform the GTK4/WebKitGTK build described above is used.
+
 ## Mailing list
 
 - feature requests, issues and patches can be discussed on the [mailing list][mail] ([list archive][mail-archive])
