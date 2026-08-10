@@ -1,0 +1,304 @@
+#import "KeyboardWebView.h"
+
+// A tiny embedded JS helper injected as a user script. It provides scroll
+// primitives and a message bus bridged back to native via window.webkit.
+static NSString *const GVimJS =
+    @"window.__vimb = (function(){"
+     "  function post(msg){"
+     "    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.vimb){"
+     "      window.webkit.messageHandlers.vimb.postMessage(msg);"
+     "    }"
+     "  }"
+     "  function scrollElement(el){"
+     "    var n = el, depth = 0;"
+     "    for (;n && depth < 40; n=n.parentElement, depth++){"
+     "      if (n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1){ return n; }"
+     "    }"
+     "    return null;"
+     "  }"
+     "  return {"
+     "    scrollToTop:function(){ var s = scrollElement(document.scrollingElement || document.documentElement);"
+     "        var e = document.scrollingElement || document.documentElement;"
+     "        e.scrollTop = 0; window.scrollTo(0,0); post({t:'scrollTop'}); },"
+     "    scrollToBottom:function(){ var e = document.scrollingElement || document.documentElement;"
+     "        e.scrollTop = e.scrollHeight; window.scrollTo(0, e.scrollHeight); post({t:'scrollBottom'}); },"
+     "    scrollBy:function(dx,dy){"
+     "        var s = scrollElement(document.activeElement);"
+     "        var e = s || (document.scrollingElement || document.documentElement);"
+     "        var nx = (e.scrollLeft||0)+dx, ny = (e.scrollTop||0)+dy;"
+     "        if (s){ try{ s.scrollBy(dx,dy); }catch(_){} } else { window.scrollBy(dx,dy); }"
+     "        post({t:'scrolled', left:nx, top:ny}); },"
+     "    pageTop:function(){ try{ window.webkit.messageHandlers.vimb.postMessage({t:'ping'}); }catch(_){} }"
+     "  };"
+     "})();";
+
+@implementation KeyboardWebView {
+    NSString *_lastQuery;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+    config.preferences = [[WKPreferences alloc] init];
+    config.websiteDataStore = [WKWebsiteDataStore defaultDataStore];
+
+    WKUserContentController *ucc = [[WKUserContentController alloc] init];
+    WKUserScript *script = [[WKUserScript alloc] initWithSource:GVimJS
+                                                 injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                                              forMainFrameOnly:NO];
+    [ucc addUserScript:script];
+    [ucc addScriptMessageHandler:self name:@"vimb"];
+    config.userContentController = ucc;
+
+    self = [super initWithFrame:frame configuration:config];
+    if (self) {
+        self.navigationDelegate = self;
+        self.UIDelegate = nil;
+        self.allowsBackForwardNavigationGestures = YES;
+        [self addObserver:self forKeyPath:@"estimatedProgress" options:0 context:NULL];
+        [self addObserver:self forKeyPath:@"title" options:0 context:NULL];
+        [self addObserver:self forKeyPath:@"URL" options:0 context:NULL];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [self.configuration.userContentController removeScriptMessageHandlerForName:@"vimb"];
+    @try {
+        [self removeObserver:self forKeyPath:@"estimatedProgress"];
+        [self removeObserver:self forKeyPath:@"title"];
+        [self removeObserver:self forKeyPath:@"URL"];
+    } @catch (NSException *e) {}
+}
+
+#pragma mark - Key handling
+
+- (void)keyDown:(NSEvent *)event {
+    VimController *vim = [self.vbDelegate vimControllerForView:self];
+    if (vim && [vim handleKeyDown:event inWebView:YES]) {
+        return; // consumed by vim
+    }
+    [super keyDown:event];
+}
+
+- (void)keyUp:(NSEvent *)event {
+    [super keyUp:event];
+}
+
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    // Cmd key combos are handled by the app menu / default bindings. Let them
+    // propagate; only intercept when a vim mode explicitly needs them.
+    if (event.modifierFlags & NSEventModifierFlagCommand) {
+        return [super performKeyEquivalent:event];
+    }
+    return [super performKeyEquivalent:event];
+}
+
+#pragma mark - KVO
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+                        change:(NSDictionary *)change context:(void *)context {
+    if ([keyPath isEqualToString:@"estimatedProgress"]) {
+        id<KeyboardWebViewDelegate> d = self.vbDelegate;
+        if (d && [d respondsToSelector:@selector(webView:didUpdateProgress:)]) {
+            [d webView:self didUpdateProgress:self.estimatedProgress];
+        }
+    } else if ([keyPath isEqualToString:@"title"]) {
+        id<KeyboardWebViewDelegate> d = self.vbDelegate;
+        if (d && [d respondsToSelector:@selector(webView:didUpdateTitle:)]) {
+            [d webView:self didUpdateTitle:self.title];
+        }
+    }
+}
+
+#pragma mark - Navigation
+
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)nav {
+    id<KeyboardWebViewDelegate> d = self.vbDelegate;
+    if (d && [d respondsToSelector:@selector(webView:didFinishLoadWithURL:)]) {
+        [d webView:self didFinishLoadWithURL:self.URL];
+    }
+}
+
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)nav withError:(NSError *)error {
+    if (error.code != NSURLErrorCancelled) {
+        id<KeyboardWebViewDelegate> d = self.vbDelegate;
+        if (d && [d respondsToSelector:@selector(webView:didReceiveMessage:)]) {
+            [d webView:self didReceiveMessage:@{@"t": @"loaderror", @"s": error.localizedDescription ?: @""}];
+        }
+    }
+}
+
+#pragma mark - Script messages (JS -> native)
+
+- (void)userContentController:(WKUserContentController *)uc
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (![message.name isEqualToString:@"vimb"]) { return; }
+    id<KeyboardWebViewDelegate> d = self.vbDelegate;
+    if (d && [d respondsToSelector:@selector(webView:didReceiveMessage:)]) {
+        if ([message.body isKindOfClass:[NSDictionary class]]) {
+            [d webView:self didReceiveMessage:(NSDictionary *)message.body];
+        }
+    }
+}
+
+#pragma mark - Downloads
+
+- (void)webView:(WKWebView *)webView navigationAction:(WKNavigationAction *)action
+    didBecomeDownload:(WKDownload *)download {
+    [self adoptDownload:download];
+}
+
+- (void)webView:(WKWebView *)webView navigationResponse:(WKNavigationResponse *)response
+    didBecomeDownload:(WKDownload *)download {
+    [self adoptDownload:download];
+}
+
+- (void)adoptDownload:(WKDownload *)download {
+    download.delegate = self;
+}
+
+- (void)download:(WKDownload *)download decideDestinationUsingResponse:(NSURLResponse *)response
+  suggestedFilename:(NSString *)suggestedFilename completionHandler:(void (^)(NSURL *destination))completionHandler {
+    NSURL *dir = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"] isDirectory:YES];
+    NSURL *dest = [dir URLByAppendingPathComponent:suggestedFilename ?: @"download"];
+    completionHandler(dest);
+}
+
+- (void)downloadDidFinish:(WKDownload *)download {
+    id<KeyboardWebViewDelegate> d = self.vbDelegate;
+    if (d && [d respondsToSelector:@selector(webView:didReceiveMessage:)]) {
+        [d webView:self didReceiveMessage:@{@"t": @"download-done"}];
+    }
+}
+
+#pragma mark - Actions
+
+#pragma mark - Hint mode
+
+- (void)toggleHints {
+    NSString *js =
+        @"(function(){"
+        @" if(window.__vimb_hint_active){window.__vimb_hint_cleanup();return;}"
+        @" var alpha=['a','b','c','d','f','g','h','j','k','l','m','n','p','q','r','s','t','u','v','w','x','y','z'];"
+        @" window.__vimb_hint_alpha=alpha;"
+        @" function lab(i){var s='',r=i;do{s=alpha[r%alpha.length]+s;r=Math.floor(r/alpha.length)-1;}while(r>=0);return s;}"
+        @" var sel='a[href],img,button,input[type=submit],input[type=button]';"
+        @" var els=Array.prototype.slice.call(document.querySelectorAll(sel));"
+        @" if(els.length===0){window.webkit.messageHandlers.vimb.postMessage({t:'hintnone'});return;}"
+        @" window.__vimb_hint_els=els;"
+        @" window.__vimb_hint_match='';"
+        @" var css=document.createElement('style');css.id='vimb-hint-css';"
+        @" css.textContent='.vimb-hint-el{position:absolute;z-index:2147483647;padding:1px 4px;"
+        @"   background:rgba(255,210,0,.95);color:#000;border-radius:2px;font:bold 12px monospace;"
+        @"   pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.3)}';"
+        @" document.documentElement.appendChild(css);"
+        @" window.__vimb_hint_labels=els.map(function(el,i){"
+        @"   var r=el.getBoundingClientRect();var d=document.createElement('div');d.className='vimb-hint-el';"
+        @"   d.textContent=lab(i);d.setAttribute('data-i',String(i));"
+        @"   d.style.left=(r.left-window.pageXOffset+4)+'px';d.style.top=(r.top-window.pageYOffset+4)+'px';"
+        @"   document.body==null?document.documentElement.appendChild(d):document.body.appendChild(d);return d;});"
+        @" window.__vimb_hint_cleanup=function(){"
+        @"   (window.__vimb_hint_labels||[]).forEach(function(d){try{d.remove();}catch(e){}});"
+        @"   var s=document.getElementById('vimb-hint-css');if(s)s.remove();"
+        @"   window.__vimb_hint_labels=[];window.__vimb_hint_els=[];window.__vimb_hint_match='';"
+        @"   window.__vimb_hint_active=0;};"
+        @" window.__vimb_hint_type=function(ch){"
+        @"   window.__vimb_hint_match+=String(ch);var m=window.__vimb_hint_match;"
+        @"   var labs=window.__vimb_hint_labels;"
+        @"   function L(d){var i=+d.getAttribute('data-i'),s='',r=i;"
+        @"      do{s=window.__vimb_hint_alpha[r%window.__vimb_hint_alpha.length]+s;"
+        @"          r=Math.floor(r/window.__vimb_hint_alpha.length)-1;}while(r>=0);return s;}"
+        @"   var vis=labs.filter(function(d){return L(d).indexOf(m)===0;});"
+        @"   labs.forEach(function(d){var on=L(d).indexOf(m)===0;d.style.display=on?'':'none';});"
+        @"   if(vis.length===1){var e=window.__vimb_hint_els[+vis[0].getAttribute('data-i')];"
+        @"       window.__vimb_hint_cleanup();"
+        @"       try{e.click();}catch(err){}}"
+        @"   else if(vis.length===0){window.__vimb_hint_cleanup();}"
+        @"   else{window.webkit.messageHandlers.vimb.postMessage({t:'hintpending',n:vis.length});}"
+        @" };"
+        @" window.__vimb_hint_active=1;"
+        @" window.webkit.messageHandlers.vimb.postMessage({t:'hintready',n:els.length});"
+        @"})();";
+    [self evaluateJavaScript:js completionHandler:nil];
+}
+
+- (void)sendHintKey:(NSString *)key {
+    NSString *ks = [key stringByReplacingOccurrencesOfString:@"'" withString:@"\\'"];
+    NSString *js2 = [NSString stringWithFormat:
+        @"if(window.__vimb_hint_active){window.__vimb_hint_type('%@')}", ks];
+    [self evaluateJavaScript:js2 completionHandler:nil];
+}
+
+- (void)scrollToTop { [self evaluateJavaScript:@"window.__vimb.scrollToTop()" completionHandler:nil]; }
+- (void)scrollToBottom { [self evaluateJavaScript:@"window.__vimb.scrollToBottom()" completionHandler:nil]; }
+- (void)scrollBy:(double)dx y:(double)dy {
+    NSString *js = [NSString stringWithFormat:@"window.__vimb.scrollBy(%f,%f)", dx, dy];
+    [self evaluateJavaScript:js completionHandler:nil];
+}
+
+- (void)scrollToPercent:(NSUInteger)percent {
+    NSString *js = [NSString stringWithFormat:
+        @"(function(){var e=document.scrollingElement||document.documentElement;"
+        @"var max=Math.max(e.scrollHeight-window.innerHeight,0);"
+        @"e.scrollTop=max*%lu/100;window.scrollTo(0,e.scrollTop);})()", (unsigned long)percent];
+    [self evaluateJavaScript:js completionHandler:nil];
+}
+
+- (void)scrollToMiddle {
+    [self evaluateJavaScript:@"(function(){var e=document.scrollingElement||document.documentElement;"
+        @"var max=Math.max(e.scrollHeight-window.innerHeight,0);e.scrollTop=max/2;window.scrollTo(0,max/2);})()"
+        completionHandler:nil];
+}
+
+- (void)scrollToX:(double)x {
+    NSString *js = [NSString stringWithFormat:@"(function(){var e=document.scrollingElement||document.documentElement;"
+        @"e.scrollLeft=%f;window.scrollTo(%f,0);})()", x, x];
+    [self evaluateJavaScript:js completionHandler:nil];
+}
+
+- (void)scrollToXEnd {
+    [self evaluateJavaScript:@"(function(){var e=document.scrollingElement||document.documentElement;"
+        @"e.scrollLeft=e.scrollWidth;window.scrollTo(e.scrollLeft,0);})()" completionHandler:nil];
+}
+
+- (void)findNextDirection:(BOOL)forward {
+    if (_lastQuery.length) {
+        [self findString:_lastQuery forwardDirection:forward];
+    }
+}
+
+- (void)focusLastActiveElement {
+    [self evaluateJavaScript:
+        @"if (typeof vimb_input_mode_element !== 'undefined' && vimb_input_mode_element) { vimb_input_mode_element.focus(); }"
+        completionHandler:nil];
+}
+
+- (void)focusFirstInput {
+    [self evaluateJavaScript:@"(function(){var e=document.querySelector('input,textarea,[contenteditable=true]');"
+        @"if(e)e.focus();})()" completionHandler:nil];
+}
+
+- (void)findString:(NSString *)query forwardDirection:(BOOL)forward {
+    if (query.length == 0) { return; }
+    _lastQuery = [query copy];
+    WKFindConfiguration *cfg = [[WKFindConfiguration alloc] init];
+    cfg.backwards = !forward;
+    cfg.caseSensitive = NO;
+    cfg.wraps = YES;
+    [self findString:query withConfiguration:cfg completionHandler:^(WKFindResult *result) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            id<KeyboardWebViewDelegate> d = self.vbDelegate;
+            if (d && [d respondsToSelector:@selector(webView:didReceiveMessage:)]) {
+                [d webView:self didReceiveMessage:@{@"t": @"find", @"found": @(result.matchFound)}];
+            }
+        });
+    }];
+}
+
+- (void)executeCommand:(NSString *)line {
+    // Reserved for future expansion of vimb ex commands that need to run JS
+    // against the page (e.g. :js). Currently unused.
+    (void)line;
+}
+
+@end

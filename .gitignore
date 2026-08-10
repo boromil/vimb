@@ -4,3 +4,10 @@
 *.tar.gz
 sandbox
 version.h
+
+macos/vimb.app
+target/
+macos/Contents/Info.plist
+
+# native build objects
+macos/*.o

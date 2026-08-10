@@ -1,0 +1,60 @@
+#import <Cocoa/Cocoa.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+typedef NS_ENUM(NSInteger, VimMode) {
+    VimModeNormal,
+    VimModeCommand,   // ':'/[fF;] lead-in line editing (vim prompt)
+    VimModeSearch,    // search prompt
+    VimModeHint       // hint overlay active
+};
+
+// Delegate implemented by the UI (BrowserWindowController). Keeps the vim
+// state machine independent of AppKit/WKWebView. Mirrors the actions invoked
+// by vimb's normal.c command handlers.
+@protocol VimDelegate <NSObject>
+// Scroll: pass the actual mode character and count, as vimb's normal_scroll
+// forwards 'j','k','$','0','G','g',^D,^U,^F,^B to vbscroll().
+- (void)vimScrollMode:(unichar)mode count:(NSUInteger)count;
+- (void)vimGoBack;
+- (void)vimGoForward;
+- (void)vimReload;
+- (void)vimStop;
+- (void)vimOpenURL:(nullable NSString *)urlValue inNewTab:(BOOL)newTab;
+- (void)vimOpenHome;                       // 'U'/'u' reopen last closed page
+- (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode;   // handle ':' / '/' / '?' / "o"/"t" opens
+- (void)vimSearch:(NSString *)query forward:(BOOL)forward;
+- (void)vimSearchDirection:(NSInteger)dir; // n/N with count
+- (void)vimSearchSelectionForward:(BOOL)forward;
+- (void)vimFire;                            // ^M: click link at search highlight
+- (void)vimFocusLastActive;                 // 'i'
+- (void)vimFocusInput;                      // 'g i'
+- (void)vimNextTab;
+- (void)vimPrevTab;
+- (void)vimGotoTab:(NSUInteger)index;       // g0, g$
+- (void)vimNewTab;
+- (void)vimCloseTab;
+- (void)vimToggleHints;
+- (void)vimHintKey:(NSString *)key;
+- (void)vimShowMessage:(NSString *)message error:(BOOL)error;
+- (void)vimFocusWebView;
+- (void)vimEnterPassThrough;                // ^Z
+- (void)vimYankURI;                         // y/Y
+- (void)vimZoom:(BOOL)in;
+- (void)vimIncrement:(BOOL)up;              // ^A / ^X
+- (void)vimQuit;                            // ^Q
+- (void)vimOpenClipboard:(NSString *)counter; // p/P paste register
+@end
+
+@interface VimController : NSObject
+@property(nonatomic, assign) VimMode mode;
+@property(nonatomic, weak, nullable) id<VimDelegate> delegate;
+- (void)reset;
+// Returns YES if the key was consumed by vim mode.
+- (BOOL)handleKeyDown:(NSEvent *)event inWebView:(BOOL)inWebView;
+// Called when the user finishes typing a prompt line / hint selection.
+- (void)commandLineCommitted:(NSString *)line;
+- (void)commandLineCancelled;
+@end
+
+NS_ASSUME_NONNULL_END

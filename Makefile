@@ -1,12 +1,22 @@
 version = 4.0.0
 include config.mk
 
+APP = vimb.app
+
+ifneq "$(NATIVE)" "1"
 all: version.h src.subdir-all
+else
+all: $(MACOSDIR)/$(APP)
+endif
 
 version.h: Makefile $(wildcard .git/index)
 	@echo "create $@"
 	$(Q)v="$$(git describe --tags 2>/dev/null)"; \
 	echo "#define VERSION \"$${v:-$(version)}\"" > $@
+
+# Native macOS build is handled entirely in macos/Makefile.
+$(MACOSDIR)/$(APP):
+	$(Q)$(MAKE) -C $(MACOSDIR)
 
 options:
 	@echo "vimb build options:"
@@ -17,6 +27,7 @@ options:
 	@echo "CC        = $(CC)"
 
 install: all
+ifneq "$(NATIVE)" "1"
 	@# binary
 	install -d $(BINPREFIX)
 	install -m 755 src/vimb $(BINPREFIX)/vimb
@@ -34,22 +45,44 @@ install: all
 	@# .metainfo.xml file
 	install -d $(METAINFOPREFIX)
 	install -m 644 vimb.metainfo.xml $(METAINFOPREFIX)/vimb.metainfo.xml
+else
+	@# copy the native .app bundle into the run/system prefix
+	install -d $(RUNPREFIX)/../$(APP)
+	tar -cf - -C $(MACOSDIR) Contents | tar -xf - -C $(RUNPREFIX)/../$(APP)
+endif
 
 uninstall:
+ifneq "$(NATIVE)" "1"
 	$(RM) $(BINPREFIX)/vimb
 	$(RM) $(DESTDIR)$(MANDIR)/man1/vimb.1
 	$(RM) $(LIBDIR)/$(EXTTARGET)
 	$(RM) $(DOTDESKTOPPREFIX)/vimb.desktop
 	$(RM) $(METAINFOPREFIX)/vimb.metainfo.xml
+else
+	$(RM) -rf $(RUNPREFIX)/../$(APP)
+endif
 
-clean: src.subdir-clean test-clean
+clean:
+ifneq "$(NATIVE)" "1"
+	src.subdir-clean test-clean
+else
+	$(Q)$(MAKE) -C $(MACOSDIR) clean
+endif
 
 sandbox:
+ifneq "$(NATIVE)" "1"
 	$(Q)$(MAKE) clean
 	$(Q)$(MAKE) RUNPREFIX=$(CURDIR)/sandbox/usr PREFIX=/usr EXTENSIONDIR=$(CURDIR)/sandbox/usr/lib/vimb DESTDIR=./sandbox install
+else
+	$(Q)$(MAKE) -C $(MACOSDIR) all
+endif
 
 runsandbox: sandbox
+ifneq "$(NATIVE)" "1"
 	sandbox/usr/bin/vimb
+else
+	$(Q)open $(MACOSDIR)/$(APP)
+endif
 
 test: version.h
 	$(MAKE) -C src vimb.so

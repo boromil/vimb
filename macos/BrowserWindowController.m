@@ -1,0 +1,557 @@
+#import "BrowserWindowController.h"
+#import "KeyboardWebView.h"
+#import "TabView.h"
+
+static const CGFloat kStatusHeight = 24.0;
+
+@interface BrowserWindowController () <VimDelegate, KeyboardWebViewDelegate, NSTextFieldDelegate>
+@property(nonatomic, strong) VimController *vim;
+@property(nonatomic, strong) NSMutableArray<VimbTab *> *tabs;
+@property(nonatomic, weak) VimbTab *activeTab;
+
+@property(nonatomic, strong) NSStackView *tabBar;
+@property(nonatomic, strong) NSMutableArray<NSButton *> *tabButtons;
+@property(nonatomic, strong) NSView *webContainer;
+@property(nonatomic, strong) NSTextField *commandField;
+@property(nonatomic, strong) NSTextField *statusField;
+@property(nonatomic, strong) NSView *currentWebviewHolder;
+@property(nonatomic, copy, nullable) NSString *commandPrefix;
+@end
+
+@implementation BrowserWindowController
+
+- (instancetype)init {
+    NSWindow *window = [[NSWindow alloc]
+        initWithContentRect:NSMakeRect(0, 0, 1100, 760)
+                  styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                             NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    window.title = @"vimb";
+    window.tabbingMode = NSWindowTabbingModeDisallowed;
+    window.minSize = NSMakeSize(640, 400);
+
+    self = [super initWithWindow:window];
+    if (self) {
+        _vim = [[VimController alloc] init];
+        _vim.delegate = self;
+        _tabs = [NSMutableArray array];
+        _tabButtons = [NSMutableArray array];
+        [self buildUI];
+        window.delegate = self;
+        [window center];
+        [self newTabInWindow];
+    }
+    return self;
+}
+
+- (void)buildUI {
+    NSView *content = self.window.contentView;
+
+    // Vertical layout: tab bar on top, web view in middle, status bar below.
+    NSStackView *v = [NSStackView stackViewWithViews:@[]];
+    v.orientation = NSUserInterfaceLayoutOrientationVertical;
+    v.alignment = NSLayoutAttributeWidth;
+    v.spacing = 0;
+    v.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:v];
+    [NSLayoutConstraint activateConstraints:@[
+        [v.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [v.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+        [v.topAnchor constraintEqualToAnchor:content.topAnchor],
+        [v.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+    ]];
+
+    // Tab bar
+    self.tabBar = [NSStackView stackViewWithViews:@[]];
+    self.tabBar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    self.tabBar.alignment = NSLayoutAttributeCenterY;
+    self.tabBar.spacing = 4;
+    self.tabBar.edgeInsets = NSEdgeInsetsMake(4, 8, 4, 8);
+    NSView *tabHost = [[NSView alloc] init];
+    tabHost.translatesAutoresizingMaskIntoConstraints = NO;
+    self.tabBar.translatesAutoresizingMaskIntoConstraints = NO;
+    [tabHost addSubview:self.tabBar];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.tabBar.leadingAnchor constraintEqualToAnchor:tabHost.leadingAnchor constant:8],
+        [self.tabBar.trailingAnchor constraintLessThanOrEqualToAnchor:tabHost.trailingAnchor constant:-8],
+        [self.tabBar.topAnchor constraintEqualToAnchor:tabHost.topAnchor],
+        [self.tabBar.bottomAnchor constraintEqualToAnchor:tabHost.bottomAnchor],
+    ]];
+    NSButton *closeBtn = [NSButton buttonWithTitle:@"×" target:self action:@selector(closeActiveTabAction:)];
+    NSButton *newBtn = [NSButton buttonWithTitle:@"+" target:self action:@selector(newTabAction:)];
+    [self.tabBar addArrangedSubview:closeBtn];
+    [self.tabBar addArrangedSubview:newBtn];
+
+    [v addArrangedSubview:tabHost];
+
+    // Web container
+    self.webContainer = [[NSView alloc] init];
+    self.webContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    [v addArrangedSubview:self.webContainer];
+
+    // Status + command line
+    self.statusField = [NSTextField labelWithString:@""];
+    self.statusField.font = [NSFont systemFontOfSize:12];
+    self.statusField.textColor = [NSColor secondaryLabelColor];
+    self.statusField.lineBreakMode = NSLineBreakByTruncatingTail;
+    self.statusField.translatesAutoresizingMaskIntoConstraints = NO;
+
+    self.commandField = [[NSTextField alloc] init];
+    self.commandField.delegate = self;
+    self.commandField.font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
+    self.commandField.hidden = YES;
+    self.commandField.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSStackView *status = [NSStackView stackViewWithViews:@[self.statusField, self.commandField]];
+    status.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    status.spacing = 8;
+    status.translatesAutoresizingMaskIntoConstraints = NO;
+    NSView *statusHost = [[NSView alloc] init];
+    statusHost.translatesAutoresizingMaskIntoConstraints = NO;
+    [statusHost addSubview:status];
+    [NSLayoutConstraint activateConstraints:@[
+        [status.leadingAnchor constraintEqualToAnchor:statusHost.leadingAnchor constant:8],
+        [status.trailingAnchor constraintEqualToAnchor:statusHost.trailingAnchor constant:-8],
+        [status.topAnchor constraintEqualToAnchor:statusHost.topAnchor],
+        [status.bottomAnchor constraintEqualToAnchor:statusHost.bottomAnchor],
+    ]];
+    NSLayoutConstraint *sh = [statusHost.heightAnchor constraintEqualToConstant:kStatusHeight];
+    sh.priority = NSLayoutPriorityRequired;
+    [NSLayoutConstraint activateConstraints:@[sh]];
+    [v addArrangedSubview:statusHost];
+
+    // Fill: webContainer expands.
+    [v setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+}
+
+#pragma mark - Tabs
+
+- (void)newTabInWindow {
+    KeyboardWebView *wv = [[KeyboardWebView alloc] initWithFrame:self.webContainer.bounds];
+    wv.vbDelegate = self;
+    VimbTab *tab = [[VimbTab alloc] initWithWebView:wv];
+    [self.tabs addObject:tab];
+    [self setActiveTab:tab];
+    [self rebuildTabBar];
+}
+
+- (void)openNewTab { [self newTabInWindow]; }
+
+- (void)setActiveTab:(VimbTab *)tab {
+    [self.currentWebviewHolder removeFromSuperview];
+    self.currentWebviewHolder = nil;
+    _activeTab = tab;   // assign ivar directly to avoid recursive setter call
+    self.currentWebviewHolder = tab.view;
+    tab.view.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.webContainer addSubview:tab.view];
+    [NSLayoutConstraint activateConstraints:@[
+        [tab.view.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor],
+        [tab.view.trailingAnchor constraintEqualToAnchor:self.webContainer.trailingAnchor],
+        [tab.view.topAnchor constraintEqualToAnchor:self.webContainer.topAnchor],
+        [tab.view.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor],
+    ]];
+    self.window.title = tab.title ?: @"vimb";
+    [self.window makeFirstResponder:tab.view];
+    [self updateStatus];
+}
+
+- (void)closeActiveTabAction:(id)sender { [self closeActiveTab]; }
+- (void)newTabAction:(id)sender { [self newTabInWindow]; }
+- (void)closeActiveTab {
+    if (self.tabs.count == 0) { return; }
+    NSUInteger idx = [self.tabs indexOfObject:self.activeTab];
+    [self.tabs removeObject:self.activeTab];
+    if (self.tabs.count == 0) {
+        [self.window close];
+        return;
+    }
+    NSUInteger next = MIN(idx, self.tabs.count - 1);
+    [self rebuildTabBar];
+    [self setActiveTab:self.tabs[next]];
+}
+
+- (void)nextTab {
+    if (self.tabs.count == 0) { return; }
+    NSUInteger idx = [self.tabs indexOfObject:self.activeTab];
+    NSUInteger next = (idx + 1) % self.tabs.count;
+    [self setActiveTab:self.tabs[next]];
+    [self rebuildTabBar];
+}
+
+- (void)prevTab {
+    if (self.tabs.count == 0) { return; }
+    NSUInteger idx = [self.tabs indexOfObject:self.activeTab];
+    NSUInteger next = (idx + self.tabs.count - 1) % self.tabs.count;
+    [self setActiveTab:self.tabs[next]];
+    [self rebuildTabBar];
+}
+
+- (void)selectTabAtIndex:(NSUInteger)index {
+    if (index < self.tabs.count) {
+        [self setActiveTab:self.tabs[index]];
+        [self rebuildTabBar];
+    }
+}
+
+- (void)tabButtonClicked:(NSButton *)sender {
+    NSUInteger idx = sender.tag;
+    [self selectTabAtIndex:idx];
+}
+
+- (void)rebuildTabBar {
+    for (NSButton *b in self.tabButtons) { [self.tabBar removeArrangedSubview:b]; }
+    [self.tabButtons removeAllObjects];
+    NSUInteger activeIdx = self.activeTab ? [self.tabs indexOfObject:self.activeTab] : NSNotFound;
+    for (NSUInteger i = 0; i < self.tabs.count; i++) {
+        VimbTab *t = self.tabs[i];
+        NSString *title = [t.title length] ? t.title : @"New Tab";
+        NSButton *b = [NSButton buttonWithTitle:title target:self action:@selector(tabButtonClicked:)];
+        b.tag = (NSInteger)i;
+        b.bezelStyle = NSBezelStyleInline;
+        b.font = [NSFont systemFontOfSize:11];
+        b.controlSize = NSControlSizeSmall;
+        if (i == activeIdx) {
+            b.state = NSControlStateValueOn;
+            b.contentTintColor = [NSColor controlAccentColor];
+        }
+        b.lineBreakMode = NSLineBreakByTruncatingTail;
+        NSLayoutConstraint *w = [b.widthAnchor constraintLessThanOrEqualToConstant:150];
+        w.priority = NSLayoutPriorityDefaultHigh;
+        [NSLayoutConstraint activateConstraints:@[w]];
+        [self.tabBar addArrangedSubview:b];
+        [self.tabButtons addObject:b];
+    }
+}
+
+#pragma mark - Loading
+
+- (void)loadURL:(NSString *)urlValue { [self loadURL:urlValue inNewTab:NO]; }
+
+- (void)loadURL:(NSString *)urlValue inNewTab:(BOOL)newTab {
+    NSURL *url = [self normalizeURL:urlValue];
+    if (newTab) { [self newTabInWindow]; }
+    [self.activeTab.webView loadRequest:[NSURLRequest requestWithURL:url]];
+    [self updateStatus];
+}
+
+- (NSURL *)normalizeURL:(NSString *)input {
+    NSString *s = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    s = [s stringByReplacingOccurrencesOfString:@"\\ " withString:@" "];
+    if (s.length == 0) { return [NSURL URLWithString:@"about:blank"]; }
+    NSRange r = [s rangeOfString:@"://"];
+    if (r.location == NSNotFound && ![s hasPrefix:@"about:"] && ![s hasPrefix:@"file:"]) {
+        BOOL hasSpace = [s rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]].location != NSNotFound;
+        if (hasSpace) {
+            // Treat as a search query.
+            NSString *enc = [s stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
+            return [NSURL URLWithString:[NSString stringWithFormat:@"https://duckduckgo.com/?q=%@", enc]];
+        }
+        if (![s containsString:@"."]) {
+            // Likely a host without dot; still try loading.
+            s = [@"https://" stringByAppendingString:s];
+        }
+        NSURL *u = [NSURL URLWithString:s];
+        if (u && u.scheme.length == 0) {
+            s = [@"https://" stringByAppendingString:s];
+            u = [NSURL URLWithString:s];
+        }
+        return u ?: [NSURL URLWithString:@"about:blank"];
+    }
+    NSURL *url = [NSURL URLWithString:s];
+    return url ?: [NSURL URLWithString:@"about:blank"];
+}
+
+#pragma mark - Vim action helpers
+
+- (void)goBack { [self.activeTab.webView goBack]; }
+- (void)goForward { [self.activeTab.webView goForward]; }
+- (void)reloadPage { [self.activeTab.webView reload]; }
+
+- (void)commandLineExecuted:(NSString *)line {
+    // Ex commands: handle a small set, otherwise pass unknown to status.
+    if ([line hasPrefix:@"open "] || [line isEqualToString:@"open"]) {
+        NSString *arg = [line hasPrefix:@"open "] ? [line substringFromIndex:5] : @"";
+        [self loadURL:arg inNewTab:NO];
+    } else if ([line hasPrefix:@"tabopen "]) {
+        NSString *arg = [line substringFromIndex:8];
+        [self loadURL:arg inNewTab:YES];
+    } else if ([line hasPrefix:@"bdelete"] || [line hasPrefix:@"bd"]) {
+        [self closeActiveTab];
+    } else if ([line hasPrefix:@"tabnext"] || [line isEqualToString:@"tabn"]) {
+        [self nextTab];
+    } else if ([line hasPrefix:@"tabprevious"] || [line isEqualToString:@"tabp"]) {
+        [self prevTab];
+    } else if ([line hasPrefix:@"b "] || [line hasPrefix:@"buffer "]) {
+        NSString *arg = [line hasPrefix:@"b "] ? [line substringFromIndex:2] : [line substringFromIndex:7];
+        NSUInteger idx = (NSUInteger)arg.integerValue;
+        if (arg.integerValue == 0 && ![arg isEqualToString:@"0"] && idx == 0) {
+            // try to match by title
+        }
+        if (idx >= 1) { [self selectTabAtIndex:idx - 1]; }
+    } else if ([line hasPrefix:@"reload"] || [line isEqualToString:@"r"]) {
+        [self reloadPage];
+    } else if ([line isEqualToString:@"quit"]) {
+        [self.window close];
+    } else if ([line hasPrefix:@"set "]) {
+        [self showMessage:line error:NO];
+    } else if (line.length == 0) {
+        // do nothing
+    } else {
+        [self showMessage:[NSString stringWithFormat:@"Unknown command: %@", line] error:YES];
+    }
+}
+
+- (void)showMessage:(NSString *)message error:(BOOL)error {
+    self.statusField.stringValue = message ?: @"";
+    self.statusField.textColor = error ? [NSColor systemRedColor] : [NSColor secondaryLabelColor];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if ([self.statusField.stringValue isEqualToString:message]) {
+            self.statusField.stringValue = @"";
+        }
+    });
+}
+
+- (void)updateStatus {
+    if (!self.activeTab) { return; }
+    NSString *url = self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString ?: @"";
+    self.statusField.stringValue = url;
+}
+
+#pragma mark - Window delegate
+
+- (void)windowWillClose:(NSNotification *)notification {
+    [self.activeTab.webView stopLoading:nil];
+    if (self.windowReleasedHandler) {
+        self.windowReleasedHandler(self);
+    }
+}
+
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    if (self.activeTab) {
+        [self.window makeFirstResponder:self.activeTab.view];
+    }
+}
+
+#pragma mark - KeyboardWebViewDelegate
+
+- (VimController *)vimControllerForView:(KeyboardWebView *)view {
+    return self.vim;
+}
+
+- (void)webView:(KeyboardWebView *)view didUpdateTitle:(NSString *)title {
+    VimbTab *tab = [self tabForWebView:view];
+    if (tab) {
+        tab.title = title ?: @"New Tab";
+        [self rebuildTabBar];
+        if (tab == self.activeTab) { self.window.title = title ?: @"vimb"; }
+    }
+}
+
+- (void)webView:(KeyboardWebView *)view didUpdateProgress:(double)progress {
+    // Reflect load progress in the status bar text; the WKWebView titlebar
+    // progress indicator is not available on this SDK.
+    if (view == self.activeTab.webView && progress > 0.0 && progress < 1.0) {
+        self.statusField.stringValue = [NSString stringWithFormat:@"loading… %d%%", (int)(progress * 100)];
+    }
+}
+
+- (void)webView:(KeyboardWebView *)view didFinishLoadWithURL:(NSURL *)url {
+    if (view == self.activeTab.webView) {
+        self.activeTab.url = url;
+        [self updateStatus];
+        [self.window makeFirstResponder:view];
+    }
+}
+
+- (void)webView:(KeyboardWebView *)view didReceiveMessage:(NSDictionary *)payload {
+    NSString *t = payload[@"t"];
+    if ([t isEqualToString:@"hintnone"]) {
+        [self showMessage:@"No hints available" error:NO];
+        [self.vim reset];
+    } else if ([t isEqualToString:@"hintready"]) {
+        [self showMessage:[NSString stringWithFormat:@"%@ hints", payload[@"n"]] error:NO];
+    } else if ([t isEqualToString:@"hintpending"]) {
+        // keep hint mode active
+    } else if ([t isEqualToString:@"loaderror"]) {
+        [self showMessage:payload[@"s"] ?: @"Page load error" error:YES];
+    } else if ([t isEqualToString:@"download-done"]) {
+        [self showMessage:@"Download finished" error:NO];
+    }
+}
+
+#pragma mark - Helpers
+
+- (VimbTab *)tabForWebView:(KeyboardWebView *)view {
+    for (VimbTab *t in self.tabs) {
+        if (t.webView == view) { return t; }
+    }
+    return nil;
+}
+
+- (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode {
+    (void)mode;
+    self.commandPrefix = prompt;
+    self.commandField.stringValue = @"";
+    self.commandField.placeholderString = [prompt isEqualToString:@":"] ? @"command" : @"search";
+    self.commandField.hidden = NO;
+    [self.window makeFirstResponder:self.commandField];
+}
+
+#pragma mark - VimDelegate
+
+// Mirrors vimb's normal_scroll -> vbscroll() dispatch (src/scripts/scroll.js).
+- (void)vimScrollMode:(unichar)mode count:(NSUInteger)count {
+    if (count == 0) { count = 1; }
+    CGFloat step = 128;
+    switch (mode) {
+        case 'j': [self.activeTab.webView scrollBy:0 y:(step * count)]; break;
+        case 'k': [self.activeTab.webView scrollBy:0 y:-(step * count)]; break;
+        case 'h': [self.activeTab.webView scrollBy:-(step * count) y:0]; break;
+        case 'l': [self.activeTab.webView scrollBy:(step * count) y:0]; break;
+        case 0x14: /* ^P unused here */ [self.activeTab.webView scrollBy:0 y:(step * count)]; break;
+        case ' ':
+        case 0x06: /* ^F */ [self pagedScrollDown:count]; break;
+        case 0x02: /* ^B */ [self pagedScrollUp:count]; break;
+        case 0x15: /* ^U */ [self pagedScrollHalfUp:count]; break;
+        case 0x04: /* ^D */ [self pagedScrollHalfDown:count]; break;
+        case 'G': [self.activeTab.webView scrollToBottom]; break;
+        case 'g':
+            if (count >= 1 && count <= 99) { [self.activeTab.webView scrollToPercent:count]; }
+            else { [self.activeTab.webView scrollToTop]; }
+            break;
+        case '0': [self.activeTab.webView scrollToX:0]; break;
+        case '$': [self.activeTab.webView scrollToXEnd]; break;
+        case 'H': [self.activeTab.webView scrollToTop]; break;
+        case 'M': [self.activeTab.webView scrollToMiddle]; break;
+        case 'L': [self.activeTab.webView scrollToBottom]; break;
+        default: break;
+    }
+}
+
+- (void)pagedScrollDown:(NSUInteger)count {
+    NSString *js = [NSString stringWithFormat:@"window.scrollBy(0, window.innerHeight*%lu)", (unsigned long)count];
+    [self.activeTab.webView evaluateJavaScript:js completionHandler:nil];
+}
+- (void)pagedScrollUp:(NSUInteger)count {
+    NSString *js = [NSString stringWithFormat:@"window.scrollBy(0, -window.innerHeight*%lu)", (unsigned long)count];
+    [self.activeTab.webView evaluateJavaScript:js completionHandler:nil];
+}
+- (void)pagedScrollHalfDown:(NSUInteger)count {
+    NSString *js = [NSString stringWithFormat:@"window.scrollBy(0, window.innerHeight*%lu/2)", (unsigned long)count];
+    [self.activeTab.webView evaluateJavaScript:js completionHandler:nil];
+}
+- (void)pagedScrollHalfUp:(NSUInteger)count {
+    NSString *js = [NSString stringWithFormat:@"window.scrollBy(0, -window.innerHeight*%lu/2)", (unsigned long)count];
+    [self.activeTab.webView evaluateJavaScript:js completionHandler:nil];
+}
+
+- (void)vimGoBack { [self goBack]; }
+- (void)vimGoForward { [self goForward]; }
+- (void)vimReload { [self reloadPage]; }
+- (void)vimStop { [self.activeTab.webView stopLoading:nil]; }
+- (void)vimOpenURL:(NSString *)urlValue inNewTab:(BOOL)newTab { [self loadURL:urlValue inNewTab:newTab]; }
+- (void)vimOpenHome {
+    NSString *start = [[NSUserDefaults standardUserDefaults] stringForKey:@"startpage"] ?: @"about:blank";
+    [self loadURL:start inNewTab:NO];
+}
+- (void)vimSearch:(NSString *)query forward:(BOOL)forward {
+    self.commandField.hidden = YES;
+    [self.activeTab.webView findString:query forwardDirection:forward];
+    [self showMessage:[NSString stringWithFormat:@"Search: %@", query] error:NO];
+}
+- (void)vimSearchDirection:(NSInteger)dir {
+    // dir is a count; sign indicates direction. Re-run the last query.
+    [self.activeTab.webView findNextDirection:(dir >= 0)];
+}
+- (void)vimSearchSelectionForward:(BOOL)forward {
+    [self showMessage:@"search selection: select text first" error:NO];
+}
+- (void)vimFire {
+    NSString *js = @"getSelection().anchorNode && getSelection().anchorNode.parentNode && getSelection().anchorNode.parentNode.click();";
+    [self.activeTab.webView evaluateJavaScript:js completionHandler:nil];
+}
+- (void)vimFocusLastActive {
+    [self.activeTab.webView focusLastActiveElement];
+}
+- (void)vimFocusInput {
+    [self.activeTab.webView focusFirstInput];
+}
+- (void)vimEnterPassThrough {
+    [self showMessage:@"pass-through not implemented on native backend" error:YES];
+}
+- (void)vimYankURI {
+    NSString *url = self.activeTab.url.absoluteString ?: @"";
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb setString:url forType:NSPasteboardTypeString];
+    [self showMessage:[NSString stringWithFormat:@"yanked %@", url] error:NO];
+}
+- (void)vimZoom:(BOOL)in {
+    CGFloat f = self.activeTab.webView.magnification;
+    f = in ? f + 0.1 : MAX(0.5, f - 0.1);
+    self.activeTab.webView.magnification = f;
+}
+- (void)vimIncrement:(BOOL)up {
+    [self showMessage:up ? @"" : @"" error:NO];
+}
+- (void)vimQuit {
+    [self.window close];
+}
+- (void)vimOpenClipboard:(NSString *)counter {
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    NSString *s = [pb stringForType:NSPasteboardTypeString];
+    if (s.length && [s containsString:@"://"]) {
+        [self loadURL:s inNewTab:NO];
+    } else if (s.length) {
+        [self loadURL:s inNewTab:NO];
+    } else {
+        [self showMessage:@"clipboard is empty" error:NO];
+    }
+    (void)counter;
+}
+
+- (void)vimNextTab { [self nextTab]; }
+- (void)vimPrevTab { [self prevTab]; }
+- (void)vimGotoTab:(NSUInteger)index {
+    if (index == NSNotFound) { [self selectTabAtIndex:self.tabs.count - 1]; }
+    else { [self selectTabAtIndex:index]; }
+}
+- (void)vimNewTab { [self newTabInWindow]; }
+- (void)vimCloseTab { [self closeActiveTab]; }
+- (void)vimToggleHints { [self.activeTab.webView toggleHints]; }
+- (void)vimHintKey:(NSString *)key { [self.activeTab.webView sendHintKey:key]; }
+- (void)vimShowMessage:(NSString *)message error:(BOOL)error { [self showMessage:message error:error]; }
+- (void)vimFocusWebView {
+    if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
+    self.commandField.hidden = YES;
+}
+
+#pragma mark - Command field (NSTextFieldDelegate)
+
+- (void)controlTextDidChange:(NSNotification *)obj { }
+- (void)controlTextDidEndEditing:(NSNotification *)obj { }
+
+- (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector {
+    if (control == self.commandField) {
+        if (commandSelector == @selector(insertNewline:)) {
+            NSString *line = self.commandField.stringValue;
+            VimMode m = self.vim.mode;
+            self.commandField.hidden = YES;
+            if (m == VimModeCommand) { [self commandLineExecuted:line]; }
+            else if (m == VimModeSearch) { [self.vim commandLineCommitted:line]; }
+            [self.vim reset];
+            [self.window makeFirstResponder:self.activeTab.view];
+            return YES;
+        }
+        if (commandSelector == @selector(cancelOperation:)) {
+            self.commandField.hidden = YES;
+            [self.vim reset];
+            [self.window makeFirstResponder:self.activeTab.view];
+            return YES;
+        }
+    }
+    return NO;
+}
+
+@end
