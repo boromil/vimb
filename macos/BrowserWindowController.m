@@ -4,14 +4,17 @@
 #import "VimbEx.h"
 #import "VimbConfig.h"
 #import "VimbEngine.h"
+#import "VimbCommandField.h"
 
 static const CGFloat kStatusHeight = 24.0;
 
-@interface BrowserWindowController () <VimDelegate, KeyboardWebViewDelegate, NSTextFieldDelegate, VimbExActor>
+@interface BrowserWindowController () <VimDelegate, KeyboardWebViewDelegate, NSTextFieldDelegate, VimbExActor, VimbCommandFieldDelegate>
 @property(nonatomic, strong) VimController *vim;
 @property(nonatomic, strong) VimbEx *exEngine;
 @property(nonatomic, strong) VimbRegisters *registers;
 @property(nonatomic, strong) VimbMarks *marks;
+@property(nonatomic, strong) NSArray<NSString *> *exHistorySnapshot;
+@property(nonatomic, assign) NSInteger exHistoryIndex;
 @property(nonatomic, strong) NSMutableArray<NSString *> *completionCycle;
 @property(nonatomic, copy) NSString *completionPrefixLine;
 @property(nonatomic, assign) NSInteger completionIndex;
@@ -22,7 +25,7 @@ static const CGFloat kStatusHeight = 24.0;
 @property(nonatomic, strong) NSStackView *tabBar;
 @property(nonatomic, strong) NSMutableArray<NSButton *> *tabButtons;
 @property(nonatomic, strong) NSView *webContainer;
-@property(nonatomic, strong) NSTextField *commandField;
+@property(nonatomic, strong) VimbCommandField *commandField;
 @property(nonatomic, strong) NSTextField *statusField;
 @property(nonatomic, strong) NSView *currentWebviewHolder;
 @property(nonatomic, copy, nullable) NSString *commandPrefix;
@@ -52,6 +55,8 @@ static const CGFloat kStatusHeight = 24.0;
         _marks = [[VimbMarks alloc] init];
         _completionCycle = [NSMutableArray array];
         _pendingMarkY = [NSMutableDictionary dictionary];
+        _exHistorySnapshot = @[];
+        _exHistoryIndex = -1;
         _tabs = [NSMutableArray array];
         _tabButtons = [NSMutableArray array];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(vimbRunCommand:)
@@ -121,7 +126,10 @@ static const CGFloat kStatusHeight = 24.0;
     // bottom of the web container. It is hidden by default and appears only
     // while a command/search is typed or a short status message is shown,
     // matching both macOS HIG (no persistent status bar) and vimb's spare UI.
-    self.commandField = [[NSTextField alloc] init];
+    VimbCommandField *cmdField = [[VimbCommandField alloc] initWithFrame:NSZeroRect];
+    cmdField.vbDelegate = self;
+    cmdField.delegate = self;
+    self.commandField = cmdField;
     self.commandField.delegate = self;
     self.commandField.font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
     self.commandField.bezelStyle = NSTextFieldRoundedBezel;
@@ -313,6 +321,7 @@ static const CGFloat kStatusHeight = 24.0;
     NSString *rest = [line substringFromIndex:1];
     switch (p) {
         case ':':
+            [[VimbConfig shared].commandStore prepend:rest max:1000];
             [self.exEngine runCommand:rest];
             break;
         case '/':
@@ -608,6 +617,8 @@ static const CGFloat kStatusHeight = 24.0;
         return;
     }
     self.commandPrefix = prompt;
+    self.exHistorySnapshot = @[];
+    self.exHistoryIndex = -1;
     if ([prompt hasPrefix:@"open "] || [prompt hasPrefix:@"tabopen "]) {
         // o/t prefills the command line with the open prefix.
         self.commandField.stringValue = prompt;
@@ -859,6 +870,53 @@ static const CGFloat kStatusHeight = 24.0;
         }
     }
     return NO;
+}
+
+#pragma mark - VimbCommandFieldDelegate
+
+- (void)commandFieldRequestedCancel:(VimbCommandField *)field {
+    [self.commandField.animator setAlphaValue:0.0];
+    [self.vim reset];
+    if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
+}
+
+- (void)commandFieldDeleteWord:(VimbCommandField *)field {
+    // Delete the word before the cursor.
+    NSText *editor = [field currentEditor];
+    if (editor && editor.selectedRange.location != NSNotFound) {
+        NSUInteger loc = editor.selectedRange.location;
+        NSString *s = editor.string;
+        NSUInteger start = loc;
+        while (start > 0) {
+            unichar c = [s characterAtIndex:start - 1];
+            if ([[NSCharacterSet whitespaceCharacterSet] characterIsMember:c]) { break; }
+            start--;
+        }
+        // consume preceding whitespace too
+        while (start > 0) {
+            unichar c = [s characterAtIndex:start - 1];
+            if (![[NSCharacterSet whitespaceCharacterSet] characterIsMember:c]) { break; }
+            start--;
+        }
+        [editor replaceCharactersInRange:NSMakeRange(start, loc - start) withString:@""];
+    }
+}
+
+- (void)commandField:(VimbCommandField *)field requestedHistory:(NSInteger)direction {
+    VimMode m = self.vim.mode;
+    if (m != VimModeCommand && m != VimModeSearch) { return; }
+    VimbStorage *store = [VimbConfig shared].commandStore;
+    if (m == VimModeSearch) { store = [VimbConfig shared].searchStore; }
+    NSArray<NSString *> *hist = [store lines];
+    if (hist.count == 0) { return; }
+    if (self.exHistorySnapshot.count == 0) {
+        self.exHistorySnapshot = hist;
+    }
+    self.exHistoryIndex += (direction < 0 ? 1 : -1);
+    if (self.exHistoryIndex < 0) { self.exHistoryIndex = 0; }
+    if (self.exHistoryIndex >= (NSInteger)hist.count) { self.exHistoryIndex = (NSInteger)hist.count - 1; }
+    NSString *line = hist[self.exHistoryIndex];
+    self.commandField.stringValue = line;
 }
 
 // Tab completion for the command line, mirroring ex.c's complete(). Tab
