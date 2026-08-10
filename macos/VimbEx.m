@@ -161,8 +161,8 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         }
         return NO;
     }
-    if ([type isEqualToString:@"map"]) { [a exMessage:@"mapping: use :nnoremap in config" error:YES]; return NO; }
-    if ([type isEqualToString:@"unmap"]) { [a exMessage:@"mapping: use :nunmap in config" error:YES]; return NO; }
+    if ([type isEqualToString:@"map"]) { return [self handleMapCommand:full arg:arg]; }
+    if ([type isEqualToString:@"unmap"]) { return [self handleUnmapCommand:full arg:arg]; }
     if ([type isEqualToString:@"source"]) { [a exMessage:@"source: not yet supported on native" error:YES]; return NO; }
     if ([type isEqualToString:@"shortcut"]) { [a exMessage:@"shortcut: use :shortcut-add" error:YES]; return NO; }
     if ([type isEqualToString:@"bookmark"]) {
@@ -223,6 +223,56 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         // :normal [cmd] — parse keys later; treat as eval no-op here.
     }
     return arg;
+}
+
+// Maps the ex command name to its mapping mode char.
+- (NSString *)mapModeForCommand:(NSString *)name {
+    if ([name hasPrefix:@"n"]) { return @"n"; }   // nmap / nnoremap / nunmap
+    if ([name hasPrefix:@"i"]) { return @"i"; }   // imap / inoremap / iunmap
+    if ([name hasPrefix:@"c"]) { return @"c"; }   // cmap / cnoremap / cunmap
+    return @"n";
+}
+
+- (BOOL)isNoremapCommand:(NSString *)name {
+    return [name containsString:@"noremap"];
+}
+
+- (BOOL)handleUnmapCommand:(NSString *)full arg:(NSString *)arg {
+    NSString *mode = [self mapModeForCommand:full];
+    NSString *lhs = [[VimbConfig shared] convertKeyString:
+        [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]];
+    if (lhs.length == 0) {
+        [self.actor exMessage:@"unmap requires a key" error:YES];
+        return NO;
+    }
+    BOOL removed = [[VimbConfig shared] removeMappingForMode:mode lhs:lhs];
+    if (!removed) {
+        // Not an error in vim; keep the command line quiet as vimb does.
+    }
+    return NO;
+}
+
+- (BOOL)handleMapCommand:(NSString *)full arg:(NSString *)arg {
+    NSString *mode = [self mapModeForCommand:full];
+    BOOL noremap = [self isNoremapCommand:full];
+
+    NSArray<NSString *> *parts = [self tokenize:arg];
+    if (parts.count < 2) {
+        [self.actor exMessage:@"map requires a lhs and a rhs" error:YES];
+        return NO;
+    }
+    NSString *lhs = [[VimbConfig shared] convertKeyString:parts[0]];
+    // rhs keeps its original spacing (may contain spaces / ex command).
+    NSString *rawRhs = [arg substringFromIndex:parts[0].length];
+    rawRhs = [rawRhs stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    NSString *rhs = [[VimbConfig shared] convertKeyString:rawRhs];
+
+    if (lhs.length == 0 || rhs.length == 0) {
+        [self.actor exMessage:@"map requires a non-empty lhs and rhs" error:YES];
+        return NO;
+    }
+    [[VimbConfig shared] addMappingForMode:mode lhs:lhs rhs:rhs noremap:noremap];
+    return NO;
 }
 
 @end

@@ -1,4 +1,5 @@
 #import "VimController.h"
+#import "VimbConfig.h"
 #import <ctype.h>
 #import <string.h>
 
@@ -42,6 +43,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 @property(nonatomic, assign) NSInteger count;
 @property(nonatomic, assign) int reg;
 @property(nonatomic, copy, nullable) NSString *promptForMode;
+@property(nonatomic, strong) NSMutableString *mapBuffer;   // pending unmapped keys (normal mode)
+@property(nonatomic, assign) int mapDepth;                  // recursion guard for remap
 @end
 
 @implementation VimController
@@ -50,6 +53,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     self = [super init];
     if (self) {
         _mode = VimModeNormal;
+        _mapBuffer = [[NSMutableString alloc] init];
         [self resetParser];
     }
     return self;
@@ -58,6 +62,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 - (void)resetParser {
     _phase = HBPhaseStart;
     _lastKey = 0; _ukey = 0; _key2 = 0; _key3 = 0; _count = 0; _reg = 0;
+    if (_mapBuffer) { [_mapBuffer setString:@""]; }
+    _mapDepth = 0;
 }
 
 - (void)reset {
@@ -148,12 +154,97 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 
     // Feed control chars through the parser keyed by control value.
     if (controlChar != 0) {
-        HBResult r = [self runParserWithKey:keysym unicode:controlChar];
+        return [self processMappedKey:controlChar keysym:keysym];
+    }
+
+    return [self processMappedKey:c keysym:keysym];
+}
+
+// Normal-mode mapping layer (port of map_handle_keys' lookup/resolve). The
+// typed key is appended to a pending buffer; if it matches (or is a strict
+// prefix of) a user mapping from VimbConfig, that mapping wins over the
+// built-in table. Otherwise the front char(s) fall through to the parser.
+// Returns YES when the key was consumed by vim.
+- (BOOL)processMappedKey:(unichar)c keysym:(int)keysym {
+    // Only normal mode applies runtime key mappings; other modes are handled
+    // by the command line / page directly.
+    if (self.mode != VimModeNormal) {
+        HBResult r = [self runParserWithKey:keysym unicode:c];
         return [self finishParse:r];
     }
 
-    HBResult res = [self runParserWithKey:keysym unicode:c];
-    return [self finishParse:res];
+    [self.mapBuffer appendFormat:@"%C", c];
+    return [self resolveMapBuffer];
+}
+
+- (BOOL)resolveMapBuffer {
+    if (self.mapDepth > 64) {
+        // Infinite remap guard.
+        [self.mapBuffer setString:@""];
+        return NO;
+    }
+    while (YES) {
+        if (self.mapBuffer.length == 0) { return YES; }
+
+        NSDictionary *res = [[VimbConfig shared] resolveMappingForMode:@"n" buffer:self.mapBuffer];
+        NSString *status = res[@"status"];
+
+        if ([status isEqualToString:@"ambiguous"]) {
+            // The buffer is a strict prefix of a longer lhs: wait for more keys.
+            return YES;
+        }
+        if ([status isEqualToString:@"match"]) {
+            NSString *rhs = res[@"rhs"];
+            BOOL noremap = [res[@"noremap"] boolValue];
+            [self.mapBuffer setString:@""];
+
+            if (rhs.length > 0 && [rhs characterAtIndex:0] == ':') {
+                // rhs is an ex command: route it through the same channel the
+                // config file / command line use so it actually takes effect.
+                NSString *cmd = [rhs substringFromIndex:1];
+                [[NSNotificationCenter defaultCenter] postNotificationName:@"VimbRunCommand"
+                    object:nil userInfo:@{@"command": cmd}];
+                [self resetParserAfterDispatch];
+                return YES;
+            }
+
+            if (noremap) {
+                [self feedParserString:rhs];
+                return YES;
+            } else {
+                // remap: re-resolve the rhs against the mappings (recursion).
+                self.mapDepth++;
+                [self.mapBuffer appendString:rhs];
+                BOOL r = [self resolveMapBuffer];
+                self.mapDepth--;
+                return r;
+            }
+        }
+
+        // "none": no mapping prefix matches; commit the front char to the
+        // parser and re-evaluate the remainder (mirrors map_handle_keys
+        // resolving one char at a time).
+        unichar front = [self.mapBuffer characterAtIndex:0];
+        [self.mapBuffer deleteCharactersInRange:NSMakeRange(0, 1)];
+        HBResult r = [self runParserWithKey:(int)front unicode:front];
+        if (r == HBResultError) {
+            // Unmapped key with no attached command: let the platform handle it.
+            [self.mapBuffer setString:@""];
+            return NO;
+        }
+    }
+}
+
+// Feeds a mapped rhs (in parser form) to the normal parser, one char at a
+// time. Returns NO if any char had no command attached.
+- (BOOL)feedParserString:(NSString *)keys {
+    BOOL consumed = YES;
+    for (NSUInteger i = 0; i < keys.length; i++) {
+        unichar c = [keys characterAtIndex:i];
+        HBResult r = [self runParserWithKey:(int)c unicode:c];
+        if (r == HBResultError) { consumed = NO; }
+    }
+    return consumed;
 }
 
 // Returns YES when the key event was fully consumed by vim (mirrors vimb's

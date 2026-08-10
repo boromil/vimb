@@ -27,6 +27,9 @@ static const NSString *COOKIE_ACCEPT = @"ask";
         _closedStore = [[VimbStorage alloc] initWithName:@"closed"];
         _queueStore = [[VimbStorage alloc] initWithName:@"queue"];
         _autocmd = [[VimbAutocmd alloc] init];
+        _mappings = [@{ @"n": [NSMutableArray array],
+                        @"i": [NSMutableArray array],
+                        @"c": [NSMutableArray array] } mutableCopy];
         _scrollstep = 40;
         _historyMax = 2000;
         _closedMax = 10;
@@ -198,6 +201,138 @@ static const NSString *COOKIE_ACCEPT = @"ask";
         [[NSNotificationCenter defaultCenter] postNotificationName:@"VimbRunCommand"
             object:nil userInfo:@{@"command": line}];
     }
+}
+
+#pragma mark - Keys / mappings
+
+- (NSDictionary<NSString *, id> *)addMappingForMode:(NSString *)mode
+                                                lhs:(NSString *)lhs
+                                                rhs:(NSString *)rhs
+                                            noremap:(BOOL)noremap {
+    NSMutableArray<NSDictionary<NSString *, id> *> *list = self.mappings[mode];
+    if (!list) { list = [NSMutableArray array]; self.mappings[mode] = list; }
+
+    // Replacing an existing mapping for the same lhs (map_insert deletes first).
+    for (NSUInteger i = 0; i < list.count; i++) {
+        NSDictionary *e = list[i];
+        if ([e[@"lhs"] isEqualToString:lhs]) {
+            [list removeObjectAtIndex:i];
+            break;
+        }
+    }
+
+    NSDictionary *entry = @{ @"lhs": lhs, @"rhs": rhs, @"noremap": @(noremap) };
+    [list insertObject:entry atIndex:0];
+    return entry;
+}
+
+- (BOOL)removeMappingForMode:(NSString *)mode lhs:(NSString *)lhs {
+    NSMutableArray<NSDictionary<NSString *, id> *> *list = self.mappings[mode];
+    if (!list) { return NO; }
+    for (NSUInteger i = 0; i < list.count; i++) {
+        NSDictionary *e = list[i];
+        if ([e[@"lhs"] isEqualToString:lhs]) {
+            [list removeObjectAtIndex:i];
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (NSDictionary<NSString *, id> *)resolveMappingForMode:(NSString *)mode buffer:(NSString *)buffer {
+    if (buffer.length == 0) {
+        return @{ @"status": @"none" };
+    }
+    NSArray<NSDictionary<NSString *, id> *> *list = self.mappings[mode];
+    BOOL ambiguous = NO;
+    NSDictionary *match = nil;
+    for (NSDictionary *m in list) {
+        NSString *lhs = m[@"lhs"];
+        // A strict prefix of a longer lhs keeps us waiting (ambiguous).
+        if (lhs.length > buffer.length && [lhs hasPrefix:buffer]) {
+            ambiguous = YES;
+        }
+        // Longest complete match that begins the buffer.
+        if (lhs.length <= buffer.length && [buffer hasPrefix:lhs]) {
+            if (!match || lhs.length > [match[@"lhs"] length]) {
+                match = m;
+            }
+        }
+    }
+    if (ambiguous) { return @{ @"status": @"ambiguous" }; }
+    if (match) {
+        return @{ @"status": @"match",
+                  @"lhs": match[@"lhs"],
+                  @"rhs": match[@"rhs"],
+                  @"noremap": match[@"noremap"] };
+    }
+    return @{ @"status": @"none" };
+}
+
+- (NSString *)convertKeyString:(NSString *)str {
+    if (str.length == 0) { return str; }
+    NSMutableString *out = [NSMutableString string];
+    NSUInteger i = 0;
+    while (i < str.length) {
+        unichar c = [str characterAtIndex:i];
+        if (c == '\\' && i + 1 < str.length && [str characterAtIndex:(i+1)] == '<') {
+            // \< re-introduces a literal '<'.
+            [out appendFormat:@"%C", (unichar)'<'];
+            i += 2;
+            continue;
+        }
+        if (c != '<') {
+            [out appendFormat:@"%C", c];
+            i += 1;
+            continue;
+        }
+        // Collect "<...>" token.
+        NSUInteger end = i + 1;
+        while (end < str.length && [str characterAtIndex:end] != '>' &&
+               [str characterAtIndex:end] != '<' && [str characterAtIndex:end] != ' ') {
+            end++;
+        }
+        if (end >= str.length || [str characterAtIndex:end] != '>') {
+            // No closing '>': treat '<' literally.
+            [out appendFormat:@"%C", c];
+            i += 1;
+            continue;
+        }
+        NSString *token = [str substringWithRange:NSMakeRange(i + 1, end - i - 1)];
+        unichar repl = [self parserCharForLabel:token];
+        if (repl != 0) {
+            [out appendFormat:@"%C", repl];
+        } else {
+            // Unknown label: use the token chars literally.
+            [out appendString:token];
+        }
+        i = end + 1;
+    }
+    return out;
+}
+
+// Returns the parser-form char for a "<...>" label (Ctrl/CR/Esc/...), or 0 if
+// the label is not a known single-char mapping.
+- (unichar)parserCharForLabel:(NSString *)token {
+    // <C-x> / <c-x> style control sequences.
+    if (token.length == 3 && [token characterAtIndex:1] == '-' &&
+        ([token hasPrefix:@"C"] || [token hasPrefix:@"c"])) {
+        unichar base = [token characterAtIndex:2];
+        if (base >= 'a' && base <= 'z') { return (unichar)(base - 'a' + 1); }
+        if (base >= 'A' && base <= 'Z') { return (unichar)(base - 'A' + 1); }
+        return 0;
+    }
+    static NSDictionary<NSString *, NSNumber *> *labels;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        labels = @{
+            @"CR": @(0x0d), @"Return": @(0x0d), @"Enter": @(0x0d),
+            @"Esc": @(0x1b), @"Tab": @(0x09), @"Space": @(0x20),
+            @"BS": @(0x08), @"NL": @(0x0a),
+        };
+    });
+    NSNumber *v = labels[token];
+    return v ? (unichar)v.unsignedShortValue : 0;
 }
 
 @end
