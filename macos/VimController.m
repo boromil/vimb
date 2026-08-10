@@ -411,6 +411,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         case 0x09: return @[@"forward"];     // ^I  (next from history handled as forward)
         case 0x0d: return @[@"fire"];        // ^M (Enter)
         case 0x0f: return @[@"back"];        // ^O
+        case 0x10: return @[@"queuepop"];     // ^P (queue pop/load next)
         case 0x11: return @[@"quit"];        // ^Q
         case 0x15: return @[@"scroll"];      // ^U
         case 0x1a: return @[@"pass"];        // ^Z
@@ -560,6 +561,11 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     if ([name isEqualToString:@"zoom"]) {
         // z + iIoOz: in/out/reset (normal_zoom). Uses the secondary key.
         [d vimZoomKey:k2 count:cnt];
+        return HBResultComplete;
+    }
+    if ([name isEqualToString:@"queuepop"]) {
+        // ^P: pop and load the next entry from the queue (normal_queue).
+        [d vimQueuePop];
         return HBResultComplete;
     }
     if ([name isEqualToString:@"prevnext"]) {

@@ -1280,6 +1280,10 @@ static const CGFloat kStatusHeight = 24.0;
         [wv scrollToY:top];
     }
 }
+- (void)vimQueuePop {
+    [self exQueue:@"qpop" arg:@""];
+}
+
 - (void)vimZoomKey:(unichar)key count:(NSInteger)count {
     if (count < 1) { count = 1; }
     if (key == 'z') {

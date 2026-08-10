@@ -68,6 +68,7 @@ static NSString *S(unichar c) {
 - (void)vimJumpMark:(unichar)c { [self record:[NSString stringWithFormat:@"jumpmark:%C", c]]; }
 - (void)vimViewSource { [self record:@"viewsource"]; }
 - (void)vimZoomKey:(unichar)key count:(NSInteger)count { [self record:[NSString stringWithFormat:@"zoom:%C:%ld", key, (long)count]]; }
+- (void)vimQueuePop { [self record:@"queuepop"]; }
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count { [self record:[NSString stringWithFormat:@"incr:%d:%ld", up, (long)count]]; }
 - (void)vimQuit { [self record:@"quit"]; }
 - (void)vimOpenClipboard:(NSString *)counter { [self record:[NSString stringWithFormat:@"clipboard:%@", counter]]; }
@@ -801,6 +802,11 @@ static void test_controller_invoke_handlers(void) {
     [spy.calls removeAllObjects];
     feed(vc, [[NSString alloc] initWithCharacters:(unichar[]){0x0d} length:1]);
     TEST_ASSERT_TRUE([spy.calls containsObject:@"fire"]);
+
+    // queue pop (^P)
+    [spy.calls removeAllObjects];
+    feed(vc, [[NSString alloc] initWithCharacters:(unichar[]){0x10} length:1]);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"queuepop"]);
 
     // increment ^A / decrement ^X
     [spy.calls removeAllObjects];

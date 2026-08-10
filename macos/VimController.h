@@ -54,6 +54,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimJumpMark:(unichar)c;             // '<char>
 - (void)vimViewSource;                      // gf/gF
 - (void)vimZoomKey:(unichar)key count:(NSInteger)count;  // z + i/I/o/O/z
+- (void)vimQueuePop;                            // ^P: pop and load queue next
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count;  // ^A / ^X
 - (void)vimQuit;                            // ^Q
 - (void)vimOpenClipboard:(NSString *)counter; // p/P paste register
