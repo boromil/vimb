@@ -636,6 +636,21 @@ static const CGFloat kStatusHeight = 24.0;
     if (![start isKindOfClass:[NSString class]] || !start.length) { start = @"about:blank"; }
     [self loadURL:start inNewTab:NO];
 }
+
+- (void)vimGoHomeURL {
+    // Go up one path segment (vimb normal_descent).
+    NSURL *u = self.activeTab.webView.URL;
+    if (!u || u.absoluteString.length == 0) { return; }
+    NSURL *res = [u URLByDeletingLastPathComponent];
+    if (res.absoluteString.length == 0) {
+        res = u;
+    }
+    NSString *resStr = res.absoluteString;
+    if (resStr.length && ![resStr hasSuffix:@"/"]) {
+        resStr = [resStr stringByAppendingString:@"/"];
+    }
+    [self loadURL:resStr inNewTab:NO];
+}
 - (void)vimSearch:(NSString *)query forward:(BOOL)forward {
     self.commandField.hidden = YES;
     [self.activeTab.webView findString:query forwardDirection:forward];
