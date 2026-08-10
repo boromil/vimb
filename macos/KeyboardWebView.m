@@ -294,6 +294,21 @@ static NSString *const GVimJS =
     decisionHandler(WKNavigationActionPolicyAllow);
 }
 
+// TLS policy (parity with tls_policy / strict-ssl in setting.c): when
+// strict-ssl is OFF, accept server-trust challenges; when ON, reject them.
+- (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
+    completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential * _Nullable))completionHandler {
+    BOOL strict = [[VimbConfig shared] getBool:@"strict-ssl" defaultValue:YES];
+    NSURLProtectionSpace *space = challenge.protectionSpace;
+    if (!strict && space.authenticationMethod == NSURLAuthenticationMethodServerTrust) {
+        // Accept the (untrusted) server certificate.
+        NSURLCredential *cred = [NSURLCredential credentialForTrust:space.serverTrust];
+        completionHandler(NSURLSessionAuthChallengeUseCredential, cred);
+        return;
+    }
+    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+}
+
 - (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)nav {
     NSString *uri = self.URL.absoluteString ?: @"";
     [[VimbConfig shared].autocmd fireEvent:VAuLoadStarting uri:uri];
