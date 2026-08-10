@@ -59,6 +59,14 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)reset;
 // Returns YES if the key was consumed by vim mode.
 - (BOOL)handleKeyDown:(NSEvent *)event inWebView:(BOOL)inWebView;
+// Foundation-only core of handleKeyDown:. The UI extracts the event's
+// keyCode, modifierFlags and charactersIgnoringModifiers and forwards them
+// here so the engine can be unit-tested without AppKit. The `mods` argument
+// takes the NSEventModifierFlags bitmask as an unsigned long; only the
+// Control and Command bits are inspected.
+- (BOOL)handleKeyCode:(int)keyCode
+            modifiers:(unsigned long)mods
+        characters:(NSString *)charsIgnoring;
 // Called when the user finishes typing a prompt line / hint selection.
 - (void)commandLineCommitted:(NSString *)line;
 - (void)commandLineCancelled;

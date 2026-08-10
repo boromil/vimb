@@ -92,11 +92,19 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 
 - (BOOL)handleKeyDown:(NSEvent *)event inWebView:(BOOL)inWebView {
     (void)inWebView;
+    return [self handleKeyCode:(int)event.keyCode
+                     modifiers:(unsigned long)event.modifierFlags
+                    characters:event.charactersIgnoringModifiers];
+}
+
+- (BOOL)handleKeyCode:(int)keyCode
+            modifiers:(unsigned long)mods
+        characters:(NSString *)chars {
+    (void)keyCode;
     id<VimDelegate> d = self.delegate;
 
-    NSEventModifierFlags mods = event.modifierFlags;
-    BOOL ctrl = (mods & NSEventModifierFlagControl) != 0;
-    BOOL cmd  = (mods & NSEventModifierFlagCommand) != 0;
+    BOOL ctrl = (mods & (1UL << 18)) != 0;   // NSEventModifierFlagControl = 1 << 18
+    BOOL cmd  = (mods & (1UL << 20)) != 0;   // NSEventModifierFlagCommand = 1 << 20
 
     // Prompt modes consume everything except a few explicit passthroughs.
     if (self.mode == VimModeCommand || self.mode == VimModeSearch) {
@@ -105,8 +113,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 
     if (self.mode == VimModePassThrough) {
         // All keys go to the page except ESC, which returns to normal mode.
-        NSString *cs = event.charactersIgnoringModifiers;
-        if (cs.length && [cs characterAtIndex:0] == 27) {
+        if (chars.length && [chars characterAtIndex:0] == 27) {
             self.mode = VimModeNormal;
             [d vimFocusWebView];
         }
@@ -114,9 +121,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     }
 
     if (self.mode == VimModeHint) {
-        NSString *cs = event.charactersIgnoringModifiers;
-        if (cs.length == 0) return YES;
-        unichar c = [cs characterAtIndex:0];
+        if (chars.length == 0) return YES;
+        unichar c = [chars characterAtIndex:0];
         if (c == 27) {                       // ESC cancels
             [d vimToggleHints];
             [self reset];
@@ -129,7 +135,6 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return YES;
     }
 
-    NSString *chars = event.charactersIgnoringModifiers;
     if (chars.length == 0) {
         return NO;
     }

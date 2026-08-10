@@ -19,11 +19,27 @@
 }
 
 - (instancetype)initWithName:(NSString *)name {
+    return [self initWithName:name directory:[VimbStorage appSupportDir]];
+}
+
+- (instancetype)initWithName:(NSString *)name directory:(NSString *)baseDir {
     self = [super init];
     if (self) {
-        _dir = [[VimbStorage appSupportDir] stringByAppendingPathComponent:name];
+        NSString *dir = [baseDir stringByAppendingPathComponent:name];
+        [[NSFileManager defaultManager] createDirectoryAtPath:[dir stringByDeletingLastPathComponent]
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        _dir = dir;
     }
     return self;
+}
+
++ (VimbStorage *)storageInTempDirectoryWithName:(NSString *)name {
+    NSString *base = NSTemporaryDirectory();
+    NSString *baseDir = [[base stringByAppendingPathComponent:@"vimb-tests"]
+                         stringByAppendingPathComponent:name];
+    [[NSFileManager defaultManager] createDirectoryAtPath:baseDir
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+    return [[VimbStorage alloc] initWithName:name directory:baseDir];
 }
 
 - (NSArray<NSString *> *)lines {

@@ -198,12 +198,15 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         unichar c = [cmdLine characterAtIndex:i];
         if (c == '"') { inQuote = !inQuote; if (inQuote) continue; }
         if (c == ' ' && !inQuote) {
-            if (cur.length) { [tokens addObject:cur]; [cur setString:@""]; }
+            if (cur.length) {
+                [tokens addObject:[cur copy]];
+                [cur setString:@""];
+            }
             continue;
         }
         [cur appendFormat:@"%C", c];
     }
-    if (cur.length) { [tokens addObject:cur]; }
+    if (cur.length) { [tokens addObject:[cur copy]]; }
     return tokens;
 }
 

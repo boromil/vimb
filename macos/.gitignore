@@ -1,0 +1,6 @@
+# Test build + coverage artifacts (make test)
+tests/vimb_tests
+tests/*.o
+tests/*.profraw
+tests/*.profdata
+tests/*.stamp
