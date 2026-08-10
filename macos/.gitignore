@@ -4,3 +4,7 @@ tests/*.o
 tests/*.profraw
 tests/*.profdata
 tests/*.stamp
+# coverage artifacts (make test emits default.profraw in cwd)
+default.profraw
+coverage.profdata
+coverage_html/
