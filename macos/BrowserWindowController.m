@@ -1084,7 +1084,26 @@ static const CGFloat kStatusHeight = 24.0;
     [self.activeTab.webView findNextDirection:(dir >= 0)];
 }
 - (void)vimSearchSelectionForward:(BOOL)forward {
-    [self showMessage:@"search selection: select text first" error:NO];
+    // #/* search the current page selection (port of normal_search_selection).
+    __weak typeof(self) weakSelf = self;
+    [self.activeTab.webView evaluateJavaScript:
+        @"(window.getSelection&&window.getSelection().toString?window.getSelection().toString():'')"
+        completionHandler:^(id result, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (error || ![result isKindOfClass:[NSString class]]) {
+                    [weakSelf showMessage:@"no selection to search" error:YES];
+                    return;
+                }
+                NSString *sel = [(NSString *)result stringByTrimmingCharactersInSet:
+                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if (sel.length == 0) {
+                    [weakSelf showMessage:@"no selection to search" error:NO];
+                    return;
+                }
+                [weakSelf.activeTab.webView findString:sel forwardDirection:forward];
+                [weakSelf showMessage:[NSString stringWithFormat:@"Search: %@", sel] error:NO];
+            });
+        }];
 }
 - (void)vimFire {
     NSString *js = @"getSelection().anchorNode && getSelection().anchorNode.parentNode && getSelection().anchorNode.parentNode.click();";

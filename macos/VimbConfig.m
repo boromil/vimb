@@ -380,10 +380,11 @@ static NSString *replaceFirstPlaceholder(NSString *tmpl, NSInteger num, NSString
     NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pattern
                                                                         options:0 error:&err];
     if (err || re == nil) { return YES; } // invalid regex -> record everything
-    NSRange hit = [re firstMatchInString:url options:0
-                                   range:NSMakeRange(0, url.length)].range;
+    NSTextCheckingResult *m = [re firstMatchInString:url options:0
+                                               range:NSMakeRange(0, url.length)];
+    if (m == nil) { return YES; } // no match -> record the url
     // GTK4 logic: regexec==0 means a MATCH -> do NOT record.
-    return hit.location == NSNotFound;
+    return NO;
 }
 
 - (nullable NSString *)userScriptSource {
