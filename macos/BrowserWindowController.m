@@ -1,11 +1,17 @@
 #import "BrowserWindowController.h"
 #import "KeyboardWebView.h"
 #import "TabView.h"
+#import "VimbEx.h"
+#import "VimbConfig.h"
+#import "VimbEngine.h"
 
 static const CGFloat kStatusHeight = 24.0;
 
-@interface BrowserWindowController () <VimDelegate, KeyboardWebViewDelegate, NSTextFieldDelegate>
+@interface BrowserWindowController () <VimDelegate, KeyboardWebViewDelegate, NSTextFieldDelegate, VimbExActor>
 @property(nonatomic, strong) VimController *vim;
+@property(nonatomic, strong) VimbEx *exEngine;
+@property(nonatomic, strong) VimbRegisters *registers;
+@property(nonatomic, strong) VimbMarks *marks;
 @property(nonatomic, strong) NSMutableArray<VimbTab *> *tabs;
 @property(nonatomic, weak) VimbTab *activeTab;
 
@@ -35,6 +41,10 @@ static const CGFloat kStatusHeight = 24.0;
     if (self) {
         _vim = [[VimController alloc] init];
         _vim.delegate = self;
+        _exEngine = [[VimbEx alloc] init];
+        _exEngine.actor = self;
+        _registers = [[VimbRegisters alloc] init];
+        _marks = [[VimbMarks alloc] init];
         _tabs = [NSMutableArray array];
         _tabButtons = [NSMutableArray array];
         [self buildUI];
@@ -269,38 +279,135 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)reloadPage { [self.activeTab.webView reload]; }
 
 - (void)commandLineExecuted:(NSString *)line {
-    // Ex commands: handle a small set, otherwise pass unknown to status.
-    if ([line hasPrefix:@"open "] || [line isEqualToString:@"open"]) {
-        NSString *arg = [line hasPrefix:@"open "] ? [line substringFromIndex:5] : @"";
-        [self loadURL:arg inNewTab:NO];
-    } else if ([line hasPrefix:@"tabopen "]) {
-        NSString *arg = [line substringFromIndex:8];
-        [self loadURL:arg inNewTab:YES];
-    } else if ([line hasPrefix:@"bdelete"] || [line hasPrefix:@"bd"]) {
-        [self closeActiveTab];
-    } else if ([line hasPrefix:@"tabnext"] || [line isEqualToString:@"tabn"]) {
-        [self nextTab];
-    } else if ([line hasPrefix:@"tabprevious"] || [line isEqualToString:@"tabp"]) {
-        [self prevTab];
-    } else if ([line hasPrefix:@"b "] || [line hasPrefix:@"buffer "]) {
-        NSString *arg = [line hasPrefix:@"b "] ? [line substringFromIndex:2] : [line substringFromIndex:7];
-        NSUInteger idx = (NSUInteger)arg.integerValue;
-        if (arg.integerValue == 0 && ![arg isEqualToString:@"0"] && idx == 0) {
-            // try to match by title
-        }
-        if (idx >= 1) { [self selectTabAtIndex:idx - 1]; }
-    } else if ([line hasPrefix:@"reload"] || [line isEqualToString:@"r"]) {
-        [self reloadPage];
-    } else if ([line isEqualToString:@"quit"]) {
-        [self.window close];
-    } else if ([line hasPrefix:@"set "]) {
-        [self showMessage:line error:NO];
-    } else if (line.length == 0) {
-        // do nothing
-    } else {
-        [self showMessage:[NSString stringWithFormat:@"Unknown command: %@", line] error:YES];
+    // The command line text may include its leading prompt char.
+    if (line.length == 0) { return; }
+    unichar p = [line characterAtIndex:0];
+    NSString *rest = [line substringFromIndex:1];
+    switch (p) {
+        case ':':
+            [self.exEngine runCommand:rest];
+            break;
+        case '/':
+            [self.activeTab.webView findString:rest forwardDirection:YES];
+            [[VimbConfig shared].searchStore prepend:rest max:100];
+            break;
+        case '?':
+            [self.activeTab.webView findString:rest forwardDirection:NO];
+            [[VimbConfig shared].searchStore prepend:rest max:100];
+            break;
+        default:
+            // open/find without a prompt char (e.g. from o/O).
+            if ([line hasPrefix:@"open "]) {
+                [self.exEngine runCommand:line];
+            } else if (p == ';' || p == 'g') {
+                [self.activeTab.webView toggleHints];
+            } else {
+                [self.exEngine runCommand:line];
+            }
+            break;
     }
 }
+
+#pragma mark - VimbExActor
+
+- (void)exOpen:(NSString *)arg newTab:(BOOL)newTab {
+    [self loadURL:arg inNewTab:newTab];
+    if (!newTab) { [self recordHistory:arg]; }
+}
+
+- (void)recordHistory:(NSString *)url {
+    [[VimbConfig shared].historyStore prepend:url max:(NSUInteger)[VimbConfig shared].historyMax];
+}
+
+- (void)exSet:(NSString *)fullArg {
+    // :set name=value | :set name | :set no[name] | :set name? | :set add+=.. etc
+    NSString *a = [fullArg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (a.length == 0) { [self showMessage:@"set requires an argument" error:YES]; return; }
+    VimbConfig *cfg = [VimbConfig shared];
+    // 'set all' prints everything
+    if ([a isEqualToString:@"all"]) {
+        NSMutableArray *lines = [NSMutableArray array];
+        [cfg.settings enumerateKeysAndObjectsUsingBlock:^(NSString *k, id v, BOOL *stop){
+            (void)stop;
+            [lines addObject:[NSString stringWithFormat:@"%@ = %@", k, v]];
+        }];
+        [self showMessage:[lines componentsJoinedByString:@"  "] error:NO];
+        return;
+    }
+    // Parse modifiers: += -= ^= ! ? (format: name+=value)
+    NSArray<NSArray<NSString *> *> *parts = nil;
+    if ([a containsString:@"+="]) { parts = [self split:a on:@"+="]; }
+    else if ([a containsString:@"-="]) { parts = [self split:a on:@"-="]; }
+    else if ([a containsString:@"^="]) { parts = [self split:a on:@"^="]; }
+    else if ([a containsString:@"="]) { parts = [self split:a on:@"="]; }
+    else if ([a hasSuffix:@"?"]) { [self showMessage:[NSString stringWithFormat:@"%@ = %@", a, cfg.settings[a]] error:NO]; return; }
+    else if ([a hasPrefix:@"no"]) {
+        NSString *name = [a substringFromIndex:2];
+        [cfg applySetting:name value:@NO];
+        return;
+    }
+    else if ([a hasPrefix:@"inv"]) {
+        NSString *name = [a substringFromIndex:3];
+        id old = cfg.settings[name] ?: @NO;
+        [cfg applySetting:name value:@(![old boolValue])];
+        return;
+    }
+
+    if (parts) {
+        NSString *name = parts[0][0];
+        NSString *val = parts[0][1];
+        if (val.length == 0) { // :set name -> on / show
+            id cur = cfg.settings[name];
+            [self showMessage:[NSString stringWithFormat:@"%@ = %@", name, cur ?: @"unset"] error:NO];
+            return;
+        }
+        NSNumber *num = @(val.doubleValue);
+        [cfg applySetting:name value:num];
+    } else {
+        // :set name (boolean -> on)
+        [cfg applySetting:a value:@YES];
+    }
+
+    // scroll-step is re-read from the config on each scroll, so nothing to do here.
+}
+
+- (NSArray<NSArray<NSString *> *> *)split:(NSString *)s on:(NSString *)sep {
+    NSArray *sp = [s componentsSeparatedByString:sep];
+    if (sp.count == 2) { return @[@[sp[0], sp[1]]]; }
+    return nil;
+}
+
+- (void)exCloseActiveTab { [self closeActiveTab]; }
+- (void)exNextTab { [self nextTab]; }
+- (void)exPrevTab { [self prevTab]; }
+- (void)exFirstTab { [self selectTabAtIndex:0]; }
+- (void)exLastTab { [self selectTabAtIndex:(self.tabs.count - 1)]; }
+- (void)exReload { [self reloadPage]; }
+- (void)exStop { [self.activeTab.webView stopLoading:nil]; }
+- (void)exHome { [self vimOpenHome]; }
+- (void)exQuit { [self.window close]; }
+- (void)exQuitAll { [NSApp terminate:nil]; }
+- (void)exEval:(NSString *)js {
+    [self.activeTab.webView evaluateJavaScript:js completionHandler:^(id result, NSError *error) {
+        NSString *out = error ? error.localizedDescription : ([result isKindOfClass:[NSString class]] ? result : [result description]);
+        if (![result isKindOfClass:[NSNull class]] && result) {
+            dispatch_async(dispatch_get_main_queue(), ^{ [self showMessage:out error:error != nil]; });
+        }
+    }];
+}
+- (void)exMessage:(NSString *)msg error:(BOOL)error {
+    if (msg.length) { [self showMessage:msg error:error]; }
+}
+- (void)exSavePage {
+    [self showMessage:@"save: not supported on native backend yet" error:YES];
+}
+- (void)exRegisterList {
+    NSString *hist = [[VimbConfig shared].commandStore lines].firstObject ?: @"";
+    [self showMessage:[NSString stringWithFormat:@"registers: \":%@@\"", hist] error:NO];
+}
+- (void)exShowMessages { [self showMessage:@"no messages" error:NO]; }
+
+
 
 - (void)showMessage:(NSString *)message error:(BOOL)error {
     self.statusField.stringValue = message ?: @"";
