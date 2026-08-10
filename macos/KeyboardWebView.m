@@ -123,6 +123,29 @@ static NSString *const GVimJS =
     }
     [prefs setValue:@([cfg getInt:@"font-size" defaultValue:16]) forKey:@"minimumFontSize"];
     [prefs setValue:@([cfg getInt:@"font-size" defaultValue:16]) forKey:@"defaultFontSize"];
+    [prefs setValue:@([cfg getInt:@"minimum-font-size" defaultValue:0]) forKey:@"minimumFontSize"];
+
+    // Additional webkit settings mapped via KVC where WKPreferences exposes
+    // the (sometimes private) backing key. Guarded so unknown keys no-op.
+    NSDictionary<NSString *, NSNumber *> *kv = @{
+        @"javascriptEnabled": @([cfg getBool:@"scripts" defaultValue:YES]),
+        @"javaScriptCanAccessClipboard": @([cfg getBool:@"javascript-can-access-clipboard" defaultValue:NO]),
+        @"mediaPlaybackRequiresUserGesture": @([cfg getBool:@"media-playback-requires-user-gesture" defaultValue:NO]),
+        @"mediaPlaybackAllowsInline": @([cfg getBool:@"media-playback-allows-inline" defaultValue:YES]),
+        @"backForwardCacheEnabled": @YES,
+    };
+    for (NSString *k in kv.keyEnumerator) {
+        id v = [prefs valueForKey:k];
+        if ([prefs respondsToSelector:NSSelectorFromString(k)] || v != nil) {
+            @try { [prefs setValue:kv[k] forKey:k]; } @catch (NSException *e) {}
+        }
+    }
+    // caret browsing
+    if ([cfg getBool:@"caret" defaultValue:NO]) {
+        @try { [prefs setValue:@YES forKey:@"caretBrowsingEnabled"]; } @catch (NSException *e) {}
+    }
+    config.defaultWebpagePreferences.allowsContentJavaScript =
+        [cfg getBool:@"scripts" defaultValue:YES];
 
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
     WKUserScript *script = [[WKUserScript alloc] initWithSource:GVimJS

@@ -394,6 +394,30 @@ static const CGFloat kStatusHeight = 24.0;
     }
 
     // scroll-step is re-read from the config on each scroll, so nothing to do here.
+    [self applyChromeSettings];
+}
+
+// Apply window/app-level settings (:set dark-mode, :set fullscreen,
+// :set show-titlebar) to the actual window, mirroring vimb's setters.
+- (void)applyChromeSettings {
+    VimbConfig *cfg = [VimbConfig shared];
+    if ([cfg getBool:@"fullscreen" defaultValue:NO]) {
+        if (!(self.window.styleMask & NSWindowStyleMaskFullScreen)) {
+            [self.window toggleFullScreen:nil];
+        }
+    } else {
+        if (self.window.styleMask & NSWindowStyleMaskFullScreen) {
+            [self.window toggleFullScreen:nil];
+        }
+    }
+    // show-titlebar: hide/show the standard titlebar via style mask.
+    BOOL show = [cfg getBool:@"show-titlebar" defaultValue:YES];
+    NSWindowStyleMask sm = self.window.styleMask;
+    if (show && !(sm & NSWindowStyleMaskTitled)) {
+        self.window.styleMask = sm | NSWindowStyleMaskTitled;
+    } else if (!show && (sm & NSWindowStyleMaskTitled)) {
+        self.window.styleMask = sm & ~NSWindowStyleMaskTitled;
+    }
 }
 
 - (NSArray<NSArray<NSString *> *> *)split:(NSString *)s on:(NSString *)sep {
