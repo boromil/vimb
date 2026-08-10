@@ -23,6 +23,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)exSavePage;
 - (void)exRegisterList;
 - (void)exShowMessages;
+- (void)exBookmarkAdd:(NSString *)url title:(NSString *)title;
+- (void)exBookmarkRemove:(NSString *)match;
 @end
 
 @interface VimbEx : NSObject

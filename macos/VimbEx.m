@@ -137,7 +137,22 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     if ([type isEqualToString:@"unmap"]) { [a exMessage:@"mapping: use :nunmap in config" error:YES]; return NO; }
     if ([type isEqualToString:@"source"]) { [a exMessage:@"source: not yet supported on native" error:YES]; return NO; }
     if ([type isEqualToString:@"shortcut"]) { [a exMessage:@"shortcut: use :shortcut-add" error:YES]; return NO; }
-    if ([type isEqualToString:@"bookmark"]) { [a exMessage:@"bookmark: :bma/:bmr" error:YES]; return NO; }
+    if ([type isEqualToString:@"bookmark"]) {
+        NSString *fullName = full; // bma/bmr
+        NSString *rest = arg;
+        if ([fullName isEqualToString:@"bma"]) {
+            // format: :bma [url [title]]  (no / with) — keep simple: url then title
+            NSArray<NSString *> *p = [self tokenize:arg];
+            if (p.count >= 1) {
+                [a exBookmarkAdd:p[0] title:(p.count >= 2 ? p[1] : @"")];
+            } else {
+                [a exMessage:@"bma requires an URL" error:YES];
+            }
+        } else if ([fullName isEqualToString:@"bmr"]) {
+            [a exBookmarkRemove:rest];
+        }
+        return NO;
+    }
     if ([type isEqualToString:@"message"]) { [a exMessage:@"" error:NO]; return NO; }
     return NO;
 }

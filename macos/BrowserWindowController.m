@@ -412,6 +412,41 @@ static const CGFloat kStatusHeight = 24.0;
 }
 - (void)exShowMessages { [self showMessage:@"no messages" error:NO]; }
 
+- (void)exBookmarkAdd:(NSString *)url title:(NSString *)title {
+    NSString *line = url;
+    if (title.length) { line = [NSString stringWithFormat:@"%@ %@", url, title]; }
+    [[VimbConfig shared].bookmarkStore prepend:line max:0];
+    [self showMessage:[NSString stringWithFormat:@"added bookmark %@", url] error:NO];
+}
+
+- (void)exBookmarkRemove:(NSString *)match {
+    NSString *target = match;
+    NSMutableArray<NSString *> *remaining = [NSMutableArray array];
+    BOOL removed = NO;
+    for (NSString *line in [[VimbConfig shared].bookmarkStore lines]) {
+        NSString *url = [line componentsSeparatedByString:@" "].firstObject;
+        if ([url hasPrefix:target]) { removed = YES; continue; }
+        [remaining addObject:line];
+    }
+    if (!removed) {
+        [remaining removeObject:target];
+    }
+    [[VimbConfig shared].bookmarkStore writeAll:remaining];
+    [self showMessage:removed ? @"bookmark removed" : @"no bookmark removed" error:!removed];
+}
+
+- (NSArray<NSDictionary *> *)bookmarksByPrefix:(NSString *)prefix {
+    NSMutableArray<NSDictionary *> *r = [NSMutableArray array];
+    for (NSString *line in [[VimbConfig shared].bookmarkStore lines]) {
+        NSString *url = [line componentsSeparatedByString:@" "].firstObject;
+        NSString *title = line.length > url.length ? [line substringFromIndex:url.length + 1] : @"";
+        if (prefix.length == 0 || [url hasPrefix:prefix] || [title hasPrefix:prefix]) {
+            [r addObject:@{@"url": url, @"title": title}];
+        }
+    }
+    return r;
+}
+
 
 
 - (void)showMessage:(NSString *)message error:(BOOL)error {
@@ -623,6 +658,7 @@ static const CGFloat kStatusHeight = 24.0;
 }
 - (void)vimYankURI {
     NSString *url = self.activeTab.url.absoluteString ?: @"";
+    [self.registers set:url forKey:'"'];
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     [pb clearContents];
     [pb setString:url forType:NSPasteboardTypeString];
@@ -640,14 +676,22 @@ static const CGFloat kStatusHeight = 24.0;
     [self.window close];
 }
 - (void)vimOpenClipboard:(NSString *)counter {
-    NSPasteboard *pb = [NSPasteboard generalPasteboard];
-    NSString *s = [pb stringForType:NSPasteboardTypeString];
-    if (s.length && [s containsString:@"://"]) {
-        [self loadURL:s inNewTab:NO];
-    } else if (s.length) {
-        [self loadURL:s inNewTab:NO];
+    NSString *text = nil;
+    if (counter.length && ![counter isEqualToString:@"0"] && ![counter isEqualToString:@"\0"]) {
+        text = [self.registers get:[counter characterAtIndex:0]];
+    }
+    if (!text) {
+        text = [self.registers get:'"'];
+    }
+    if (!text) {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        text = [pb stringForType:NSPasteboardTypeString];
+    }
+    text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (text.length) {
+        [self loadURL:text inNewTab:NO];
     } else {
-        [self showMessage:@"clipboard is empty" error:NO];
+        [self showMessage:@"no register content" error:NO];
     }
     (void)counter;
 }
@@ -697,8 +741,63 @@ static const CGFloat kStatusHeight = 24.0;
             [self.window makeFirstResponder:self.activeTab.view];
             return YES;
         }
+        if (commandSelector == @selector(insertTab:)) {
+            [self completeCommandField];
+            return YES;
+        }
     }
     return NO;
+}
+
+// Tab completion for the command line: completes :open/:bdelete urls from
+// history+bookmarks+closed, and :set names from the settings registry.
+- (void)completeCommandField {
+    NSString *line = self.commandField.stringValue;
+    VimMode m = self.vim.mode;
+    if (m == VimModeSearch) { return; }
+    NSMutableArray<NSString *> *cands = [NSMutableArray array];
+
+    if ([line hasPrefix:@"open "] || [line hasPrefix:@"tabopen "]) {
+        BOOL tab = [line hasPrefix:@"tabopen "];
+        NSString *prefix = [line substringFromIndex:(tab ? 8 : 5)];
+        for (NSDictionary *b in [self bookmarksByPrefix:prefix]) { [cands addObject:b[@"url"]]; }
+        for (NSString *h in [[VimbConfig shared].historyStore lines]) { if ([h hasPrefix:prefix] && ![cands containsObject:h]) [cands addObject:h]; }
+        for (NSString *c in [[VimbConfig shared].closedStore lines]) { if ([c hasPrefix:prefix] && ![cands containsObject:c]) [cands addObject:c]; }
+        if (cands.count == 1) {
+            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", tab ? @"tabopen " : @"open ", cands[0]];
+        } else if (cands.count > 1 && cands.count <= 8) {
+            [self showMessage:[cands componentsJoinedByString:@"  "] error:NO];
+        } else if (cands.count > 8) {
+            [self showMessage:[NSString stringWithFormat:@"%lu completions", (unsigned long)cands.count] error:NO];
+        }
+    } else if ([line hasPrefix:@"bdelete "] || [line hasPrefix:@"bd "]) {
+        NSString *prefix = [line containsString:@" "] ? [line substringFromIndex:([line rangeOfString:@" "].location + 1)] : @"";
+        for (VimbTab *t in self.tabs) {
+            NSString *turl = t.url.absoluteString ?: t.webView.URL.absoluteString ?: @"";
+            NSString *ttitle = t.title ?: @"";
+            if ([turl hasPrefix:prefix] || [ttitle hasPrefix:prefix]) {
+                [cands addObject:[NSString stringWithFormat:@"%@ — %@", ttitle, turl]];
+            }
+        }
+        if (cands.count == 1) {
+            self.commandField.stringValue = line;
+            [self showMessage:[NSString stringWithFormat:@"%lu matching tab(s)", (unsigned long)cands.count] error:NO];
+        } else if (cands.count > 1) {
+            [self showMessage:[cands componentsJoinedByString:@"  "] error:NO];
+        }
+    } else if ([line hasPrefix:@"set "]) {
+        NSString *prefix = [line substringFromIndex:4];
+        for (NSString *name in [VimbConfig shared].settings.allKeys) {
+            if ([name hasPrefix:prefix]) { [cands addObject:name]; }
+        }
+        if (cands.count == 1) {
+            self.commandField.stringValue = [NSString stringWithFormat:@"set %@", cands[0]];
+        } else if (cands.count > 1 && cands.count <= 8) {
+            [self showMessage:[cands componentsJoinedByString:@"  "] error:NO];
+        }
+    } else if ([line hasPrefix:@"shellcmd "]) {
+        // no shell completion on native
+    }
 }
 
 @end
