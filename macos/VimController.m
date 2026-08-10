@@ -335,18 +335,23 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"cmdline"]) {
-        if (c == 'f')            { [d vimOpenPrompt:@"g;" mode:VimModeHint]; }
-        else if (c == 'F')       { [d vimOpenPrompt:@";t" mode:VimModeHint]; }
-        else if (c == '/' || c == '?') {
+        if (c == 'f' || c == 'F') {
+            // f/F: enter hint mode and follow a link. Hints engine owns the
+            // overlay; the webview stays focused so typed keys filter hints.
+            [d vimOpenPrompt:@"" mode:VimModeHint];
+            [d vimToggleHints];
+        } else if (c == '/' || c == '?') {
             [d vimOpenPrompt:[NSString stringWithFormat:@"%c", c] mode:VimModeSearch];
             self.promptForMode = (c == '/') ? @"forward" : @"backward";
+        } else {
+            [d vimOpenPrompt:@":" mode:VimModeCommand];
         }
-        else                     { [d vimOpenPrompt:@":" mode:VimModeCommand]; }
         return HBResultComplete;
     }
     if ([name isEqualToString:@"hint"]) {
-        NSString *prompt = [NSString stringWithFormat:@";%c", k2];
-        [d vimOpenPrompt:prompt mode:VimModeHint];
+        // ';' + follow key: enter hint mode.
+        [d vimOpenPrompt:@"" mode:VimModeHint];
+        [d vimToggleHints];
         return HBResultComplete;
     }
     if ([name isEqualToString:@"inputopen"]) {

@@ -390,7 +390,12 @@ static const CGFloat kStatusHeight = 24.0;
 }
 
 - (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode {
-    (void)mode;
+    if (mode == VimModeHint) {
+        // Hint mode keeps the webview focused so hint keys route to JS.
+        self.commandField.hidden = YES;
+        if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
+        return;
+    }
     self.commandPrefix = prompt;
     self.commandField.stringValue = @"";
     self.commandField.placeholderString = [prompt isEqualToString:@":"] ? @"command" : @"search";
