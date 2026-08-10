@@ -92,7 +92,18 @@ typedef NS_ENUM(NSInteger, ExCmd) {
 
     NSString *full = [self matchCommand:name];
     if (!full) {
-        [a exMessage:[NSString stringWithFormat:@"Invalid command: %@", name] error:YES];
+        // Not a recognized ex command: treat the whole line as a URL/query to
+        // open (vim b) — this makes ":open foo", bare ":" URLs and prefilled
+        // command lines behave consistently.
+        if ([cmdLine rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]].location == NSNotFound
+            && ![cmdLine containsString:@"/"]
+            && ![cmdLine containsString:@"."]) {
+            // Still ambiguous-ly not a URL (a single bare token with no dot or
+            // slash); could be a typo'd command.
+            [a exMessage:[NSString stringWithFormat:@"Invalid command: %@", name] error:YES];
+            return NO;
+        }
+        [a exOpen:cmdLine newTab:NO];
         return NO;
     }
     (void)bang;
