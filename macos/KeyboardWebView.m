@@ -64,6 +64,7 @@ static NSString *const GVimJS =
     NSString *_lastQuery;
     BOOL _editableFocusActive;
     double _pendingMarkY;
+    double _autofocusCooldownUntil; // ignore scripted autofocus briefly post-load
 }
 
 // Builds a user script that injects a <style> element carrying the vimb
@@ -329,6 +330,10 @@ static NSString *const GVimJS =
     // drop any page-editable focus so keys route to the vim engine even if the
     // page autofocused a search/input field.
     _editableFocusActive = NO;
+    // Suppress a (possibly delayed) scripted autofocus for a short window after
+    // load so vim keys like ":" and "o" work immediately on the start page; the
+    // user can still click into a field to type.
+    _autofocusCooldownUntil = [[NSDate date] timeIntervalSinceReferenceDate] + 0.75;
     [self evaluateJavaScript:@"(()=>{const e=document.activeElement;if(e&&(e.isContentEditable||/^(INPUT|TEXTAREA)$/.test(e.tagName)))e.blur();})()"
             completionHandler:nil];
     // Apply the default-zoom setting (parity with default_zoom in setting.c).
@@ -362,7 +367,12 @@ static NSString *const GVimJS =
         NSDictionary *body = (NSDictionary *)message.body;
         // Track text-input focus so keys pass through to the page.
         if ([body[@"t"] isEqualToString:@"focusactive"]) {
-            _editableFocusActive = YES;
+            // Ignore programmatic autofocus right after a page load so vim
+            // keys work immediately; a real click after the cooldown re-enables
+            // page typing.
+            if ([[NSDate date] timeIntervalSinceReferenceDate] >= _autofocusCooldownUntil) {
+                _editableFocusActive = YES;
+            }
         }
         if ([body[@"t"] isEqualToString:@"focusclear"]) {
             _editableFocusActive = NO;
