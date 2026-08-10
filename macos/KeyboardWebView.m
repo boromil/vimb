@@ -386,6 +386,20 @@ static NSString *const GVimJS =
         return;
     }
     NSString *js = [self hintOverlayScriptForMode:followMode gmode:gmode];
+    // Use the configured hint-keys alphabet (default a..z) instead of the
+    // hardcoded base-26 list, matching setting.c 'hint-keys'.
+    NSString *keys = [[VimbConfig shared] getString:@"hint-keys" defaultValue:@"abcdefghijklmnopqrstuvwxyz"];
+    if (keys.length == 0) { keys = @"abcdefghijklmnopqrstuvwxyz"; }
+    NSMutableArray *chars = [NSMutableArray array];
+    for (NSUInteger i = 0; i < keys.length && chars.count < 36; i++) {
+        NSString *ch = [keys substringWithRange:NSMakeRange(i, 1)];
+        if (![chars containsObject:ch]) { [chars addObject:[NSString stringWithFormat:@"'%@'", ch]]; }
+    }
+    NSString *alphaLit = [NSString stringWithFormat:@"var alpha=[%@];", [chars componentsJoinedByString:@","]];
+    NSString *oldAlpha = @"var alpha=['a','b','c','d','f','g','h','j','k','l','m','n','p','q','r','s','t','u','v','w','x','y','z'];";
+    if ([js containsString:oldAlpha]) {
+        js = [js stringByReplacingOccurrencesOfString:oldAlpha withString:alphaLit];
+    }
     [self evaluateJavaScript:js completionHandler:nil];
 }
 
