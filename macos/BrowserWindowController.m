@@ -578,8 +578,7 @@ static const CGFloat kStatusHeight = 24.0;
         [self showMessage:@"nothing to save" error:YES];
         return;
     }
-    NSString *destDir = [[VimbConfig shared] getString:@"download-path"
-                                         defaultValue:NSHomeDirectory()];
+    NSString *destDir = [[VimbConfig shared] downloadsDirectory];
     NSString *dest = path;
     if (!dest.length) {
         NSString *name = [[uri lastPathComponent] stringByRemovingPercentEncoding];

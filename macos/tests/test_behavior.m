@@ -641,6 +641,15 @@ static void test_ex_ambiguous_command(void) {
 
 #pragma mark - VimbHandler (parity: src/handler.c)
 
+static void test_download_directory_setting(void) {
+    // download-path default falls back to non-empty; a custom path is honored.
+    VimbConfig *c = [[VimbConfig alloc] init];
+    [c loadDefaults];
+    TEST_ASSERT_TRUE([c downloadsDirectory].length > 0);
+    [c applySetting:@"download-path" value:@"/tmp/vimb-dl"];
+    TEST_ASSERT_EQ_STR([c downloadsDirectory], @"/tmp/vimb-dl");
+}
+
 static void test_handler_add_remove_lookup(void) {
     VimbHandler *h = [[VimbHandler alloc] init];
     // add
@@ -1248,6 +1257,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_autocmd_wildcard_patterns);
 
     RUN_TEST(test_handler_add_remove_lookup);
+    RUN_TEST(test_download_directory_setting);
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
 

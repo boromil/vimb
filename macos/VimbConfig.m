@@ -358,6 +358,12 @@ static NSString *replaceFirstPlaceholder(NSString *tmpl, NSInteger num, NSString
     return url ?: @"https://duckduckgo.com/html/?q=$0";
 }
 
+- (NSString *)downloadsDirectory {
+    NSString *dir = [self getString:@"download-path"
+                       defaultValue:[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]];
+    return dir.length ? dir : NSHomeDirectory();
+}
+
 - (NSString *)loadURI:(NSString *)input {
     NSString *path = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (path.length == 0) {

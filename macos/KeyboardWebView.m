@@ -348,7 +348,9 @@ static NSString *const GVimJS =
 
 - (void)download:(WKDownload *)download decideDestinationUsingResponse:(NSURLResponse *)response
   suggestedFilename:(NSString *)suggestedFilename completionHandler:(void (^)(NSURL *destination))completionHandler {
-    NSURL *dir = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"] isDirectory:YES];
+    // Honor the download-path setting (parity with vb_download_set_destination).
+    NSString *destDir = [[VimbConfig shared] downloadsDirectory];
+    NSURL *dir = [NSURL fileURLWithPath:destDir isDirectory:YES];
     NSURL *dest = [dir URLByAppendingPathComponent:suggestedFilename ?: @"download"];
     completionHandler(dest);
 }
