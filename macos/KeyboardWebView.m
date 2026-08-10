@@ -427,6 +427,15 @@ static NSString *const GVimJS =
     _pendingMarkY = y;
 }
 
+- (void)incrementURI:(NSInteger)delta {
+    NSString *js = [NSString stringWithFormat:
+        @"(function(){var c=%ld,on,nn,m=location.href.match(/(.*?)(\\d+)(\\D*)$/);"
+        @"if(m){on=m[2];nn=String(Math.max(parseInt(on)+c,0));"
+        @"if(/^0/.test(on)){while(nn.length<on.length){nn='0'+nn;}}"
+        @"m[2]=nn;location.href=m.slice(1).join('');}})()", (long)delta];
+    [self evaluateJavaScript:js completionHandler:nil];
+}
+
 - (void)findString:(NSString *)query forwardDirection:(BOOL)forward {
     if (query.length == 0) { return; }
     _lastQuery = [query copy];

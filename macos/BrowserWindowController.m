@@ -435,8 +435,36 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)exMessage:(NSString *)msg error:(BOOL)error {
     if (msg.length) { [self showMessage:msg error:error]; }
 }
-- (void)exSavePage {
-    [self showMessage:@"save: not supported on native backend yet" error:YES];
+- (void)exSavePage:(NSString *)path {
+    NSString *uri = self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString ?: @"";
+    if (uri.length == 0 || [uri isEqualToString:@"about:blank"]) {
+        [self showMessage:@"nothing to save" error:YES];
+        return;
+    }
+    NSString *destDir = [[VimbConfig shared] getString:@"download-path"
+                                         defaultValue:NSHomeDirectory()];
+    NSString *dest = path;
+    if (!dest.length) {
+        NSString *name = [[uri lastPathComponent] stringByRemovingPercentEncoding];
+        if (!name.length) { name = @"vimb-page.html"; }
+        dest = [destDir stringByAppendingPathComponent:name];
+    }
+    NSURL *url = [NSURL URLWithString:uri];
+    if (!url) { [self showMessage:@"invalid url" error:YES]; return; }
+    __weak typeof(self) weakSelf = self;
+    [[[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        (void)resp;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (err || !data) {
+                [weakSelf showMessage:[@"save failed: " stringByAppendingString:err ? err.localizedDescription : @"no data"] error:YES];
+                return;
+            }
+            NSError *werr = nil;
+            [data writeToFile:dest options:NSDataWritingAtomic error:&werr];
+            if (werr) { [weakSelf showMessage:[@"save failed: " stringByAppendingString:werr.localizedDescription] error:YES]; }
+            else { [weakSelf showMessage:[@"saved to " stringByAppendingString:dest] error:NO]; }
+        });
+    }] resume];
 }
 - (void)exRegisterList {
     NSString *hist = [[VimbConfig shared].commandStore lines].firstObject ?: @"";
@@ -732,7 +760,10 @@ static const CGFloat kStatusHeight = 24.0;
     [self.activeTab.webView focusFirstInput];
 }
 - (void)vimEnterPassThrough {
-    [self showMessage:@"pass-through not implemented on native backend" error:YES];
+    self.vim.mode = VimModePassThrough;
+    [self showMessage:@"-- PASS THROUGH -- (Press ESC to return)" error:NO];
+    // Focus the web view so page keys are received.
+    [self.window makeFirstResponder:self.activeTab.view];
 }
 - (void)vimYankURI {
     NSString *url = self.activeTab.url.absoluteString ?: @"";
@@ -781,8 +812,10 @@ static const CGFloat kStatusHeight = 24.0;
     f = in ? f + 0.1 : MAX(0.5, f - 0.1);
     self.activeTab.webView.magnification = f;
 }
-- (void)vimIncrement:(BOOL)up {
-    [self showMessage:up ? @"" : @"" error:NO];
+- (void)vimIncrement:(BOOL)up count:(NSInteger)count {
+    NSInteger delta = up ? count : -count;
+    if (count == 0) { delta = up ? 1 : -1; }
+    [self.activeTab.webView incrementURI:delta];
 }
 - (void)vimQuit {
     [self.window close];

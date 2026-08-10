@@ -97,6 +97,16 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return YES;
     }
 
+    if (self.mode == VimModePassThrough) {
+        // All keys go to the page except ESC, which returns to normal mode.
+        NSString *cs = event.charactersIgnoringModifiers;
+        if (cs.length && [cs characterAtIndex:0] == 27) {
+            self.mode = VimModeNormal;
+            [d vimFocusWebView];
+        }
+        return NO; // let the page handle the key
+    }
+
     if (self.mode == VimModeHint) {
         NSString *cs = event.charactersIgnoringModifiers;
         if (cs.length == 0) return YES;
@@ -320,8 +330,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         [self reset];
         return HBResultComplete;
     }
-    if ([name isEqualToString:@"inc"]) { [d vimIncrement:YES]; return HBResultComplete; }
-    if ([name isEqualToString:@"dec"]) { [d vimIncrement:NO]; return HBResultComplete; }
+    if ([name isEqualToString:@"inc"]) { [d vimIncrement:YES count:cnt]; return HBResultComplete; }
+    if ([name isEqualToString:@"dec"]) { [d vimIncrement:NO count:cnt]; return HBResultComplete; }
     if ([name isEqualToString:@"searchsel"]) {
         [d vimSearchSelectionForward:(c == '*')];
         return HBResultComplete;

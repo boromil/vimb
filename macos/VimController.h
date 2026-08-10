@@ -4,9 +4,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, VimMode) {
     VimModeNormal,
-    VimModeCommand,   // ':'/[fF;] lead-in line editing (vim prompt)
+    VimModeCommand,   // ':'/'/'/'?' lead-in editing (vim prompt)
     VimModeSearch,    // search prompt
-    VimModeHint       // hint overlay active
+    VimModeHint,      // hint overlay active
+    VimModePassThrough // ^Z: all keys to the page except ESC
 };
 
 // Delegate implemented by the UI (BrowserWindowController). Keeps the vim
@@ -46,7 +47,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimSetMark:(unichar)c;              // m<char>
 - (void)vimJumpMark:(unichar)c;             // '<char>
 - (void)vimZoom:(BOOL)in;
-- (void)vimIncrement:(BOOL)up;              // ^A / ^X
+- (void)vimIncrement:(BOOL)up count:(NSInteger)count;  // ^A / ^X
 - (void)vimQuit;                            // ^Q
 - (void)vimOpenClipboard:(NSString *)counter; // p/P paste register
 @end

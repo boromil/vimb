@@ -35,6 +35,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)findNextDirection:(BOOL)forward;
 - (void)focusLastActiveElement;
 - (void)focusFirstInput;
+- (void)incrementURI:(NSInteger)delta;
 - (void)getScrollTopWithCompletion:(void (^)(double top))completion;
 - (void)scrollToY:(double)y;
 - (void)jumpToURI:(NSString *)uri withY:(double)y;

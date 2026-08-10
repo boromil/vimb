@@ -143,7 +143,7 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         [a exEval:[self evalArg:full arg:arg]];
         return NO;
     }
-    if ([type isEqualToString:@"save"]) { [a exSavePage]; return NO; }
+    if ([type isEqualToString:@"save"]) { [a exSavePage:arg.length ? arg : nil]; return NO; }
     if ([type isEqualToString:@"register"]) { [a exRegisterList]; return NO; }
     if ([type isEqualToString:@"autocmd"]) {
         VimbAutocmd *au = [VimbConfig shared].autocmd;
