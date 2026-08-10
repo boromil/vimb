@@ -85,6 +85,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)searchURLForQuery:(NSString *)query;
 // Directory downloads are saved to (the download-path setting or ~/Downloads).
 - (NSString *)downloadsDirectory;
+// Effective scroll step in px: scroll-step * scroll-multiplier (parity).
+- (CGFloat)scrollStep;
 // Decide what to load for an open input (port of src/main.c vb_load_uri):
 // returns the direct URL, a search/shortcut URL, or an http:// fallback.
 - (NSString *)loadURI:(NSString *)input;

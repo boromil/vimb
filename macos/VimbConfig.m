@@ -364,6 +364,14 @@ static NSString *replaceFirstPlaceholder(NSString *tmpl, NSInteger num, NSString
     return dir.length ? dir : NSHomeDirectory();
 }
 
+- (CGFloat)scrollStep {
+    NSInteger step = [self getInt:@"scroll-step" defaultValue:40];
+    NSInteger mult = [self getInt:@"scroll-multiplier" defaultValue:1];
+    if (step < 1) { step = 1; }
+    if (mult < 1) { mult = 1; }
+    return (CGFloat)(step * mult);
+}
+
 - (NSString *)loadURI:(NSString *)input {
     NSString *path = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (path.length == 0) {

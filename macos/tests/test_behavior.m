@@ -650,6 +650,24 @@ static void test_download_directory_setting(void) {
     TEST_ASSERT_EQ_STR([c downloadsDirectory], @"/tmp/vimb-dl");
 }
 
+static void test_scroll_step_from_settings(void) {
+    VimbConfig *c = [[VimbConfig alloc] init];
+    // Defaults: scroll-step 40, multiplier 1 -> 40.
+    [c loadDefaults];
+    TEST_ASSERT([c scrollStep] >= 39.0 && [c scrollStep] <= 41.0);
+    // Custom step applies.
+    [c applySetting:@"scroll-step" value:@(80)];
+    TEST_ASSERT([c scrollStep] >= 79.0 && [c scrollStep] <= 81.0);
+    // multiplier multiplies.
+    [c applySetting:@"scroll-multiplier" value:@(3)];
+    TEST_ASSERT([c scrollStep] >= 239.0 && [c scrollStep] <= 241.0);
+    // degenerate values clamp to >=1.
+    [c applySetting:@"scroll-step" value:@(0)];
+    [c applySetting:@"scroll-multiplier" value:@(0)];
+    TEST_ASSERT([c scrollStep] >= 0.9 && [c scrollStep] <= 1.1);
+}
+
+
 static void test_handler_add_remove_lookup(void) {
     VimbHandler *h = [[VimbHandler alloc] init];
     // add
@@ -1258,6 +1276,7 @@ int run_behavior_main(void) {
 
     RUN_TEST(test_handler_add_remove_lookup);
     RUN_TEST(test_download_directory_setting);
+    RUN_TEST(test_scroll_step_from_settings);
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
 

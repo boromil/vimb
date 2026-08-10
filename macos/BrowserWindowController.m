@@ -981,7 +981,7 @@ static const CGFloat kStatusHeight = 24.0;
 // Mirrors vimb's normal_scroll -> vbscroll() dispatch (src/scripts/scroll.js).
 - (void)vimScrollMode:(unichar)mode count:(NSUInteger)count {
     if (count == 0) { count = 1; }
-    CGFloat step = 128;
+    CGFloat step = [[VimbConfig shared] scrollStep];
     switch (mode) {
         case 'j': [self.activeTab.webView scrollBy:0 y:(step * count)]; break;
         case 'k': [self.activeTab.webView scrollBy:0 y:-(step * count)]; break;
