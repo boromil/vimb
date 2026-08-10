@@ -1012,10 +1012,21 @@ static const CGFloat kStatusHeight = 24.0;
         case 0x02: /* ^B */ [self pagedScrollUp:count]; break;
         case 0x15: /* ^U */ [self pagedScrollHalfUp:count]; break;
         case 0x04: /* ^D */ [self pagedScrollHalfDown:count]; break;
-        case 'G': [self.activeTab.webView scrollToBottom]; break;
+        case 'G':
+            if (count >= 1) {
+                // NG: scroll to N% (100 -> bottom), matching scroll.js 'G'/'g'.
+                [self.activeTab.webView scrollToPercent:(count >= 100 ? 100 : count)];
+            } else {
+                [self.activeTab.webView scrollToBottom];
+            }
+            break;
         case 'g':
-            if (count >= 1 && count <= 99) { [self.activeTab.webView scrollToPercent:count]; }
-            else { [self.activeTab.webView scrollToTop]; }
+            if (count >= 1) {
+                // Ngg: scroll to N% (100 -> bottom).
+                [self.activeTab.webView scrollToPercent:(count >= 100 ? 100 : count)];
+            } else {
+                [self.activeTab.webView scrollToTop];
+            }
             break;
         case '0': [self.activeTab.webView scrollToX:0]; break;
         case '$': [self.activeTab.webView scrollToXEnd]; break;
