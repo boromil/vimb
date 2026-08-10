@@ -36,14 +36,24 @@ OBJS := $(SRCS:.m=.o)
 
 all: $(APP)
 
-$(APP): $(OBJS) Contents/Info.plist
+$(APP): $(OBJS) Contents/Info.plist vimb.icns
 	@echo "  LD    $(APP)/Contents/MacOS/$(NAME)"
 	@mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	@$(CC) $(OBJS) $(LDFLAGS) -o $(APP)/Contents/MacOS/$(NAME)
 	@install -m 644 Contents/Info.plist $(APP)/Contents/Info.plist
 	@install -m 644 ../vimb.metainfo.xml $(APP)/Contents/Resources/ 2>/dev/null || true
+	@install -m 644 vimb.icns $(APP)/Contents/Resources/vimb.icns
 	@# ad-hoc sign so the app is launchable locally without Xcode
 	@codesign --force --sign - $(APP) >/dev/null 2>&1 || true
+
+# Regenerate the app icon from make_icon.swift when Swift sources/newer plist
+# change. Kept lightweight: only rebuild if the script is newer than the icns.
+vimb.icns: make_icon.swift
+	@echo "  ICON  $@"
+	@d="$$(mktemp -d)"; \
+	swift make_icon.swift "$$d" >/dev/null 2>&1 && \
+	iconutil -c icns "$$d/vimb.iconset" -o $@; \
+	rm -rf "$$d"
 
 Contents/Info.plist: Info.plist.in
 	@echo "  PLIST $(APP)"
