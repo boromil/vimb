@@ -58,12 +58,21 @@ typedef NS_ENUM(NSInteger, VimMode) {
 
 @interface VimController : NSObject
 @property(nonatomic, assign) VimMode mode;
+// One-shot normal mode from a page text field (Ctrl-O in input, port of
+// input.c input_keypress): the next keys run as normal-mode commands.
+@property(nonatomic, assign) BOOL oneShotNormal;
 @property(nonatomic, weak, nullable) id<VimDelegate> delegate;
 - (void)reset;
 // Whether a key should be handed to the page (true) vs processed by vim mode
 // (false), given whether a page text field currently holds focus. Mirrors
 // vimb's normal-vs-input mode split.
 - (BOOL)shouldPassKeysToPage:(BOOL)pageEditableActive;
+// Handle a key while a page text field is focused (input mode). Returns YES
+// if the key was consumed (e.g. Ctrl-O one-shot normal, ESC). Port of
+// input.c input_keypress.
+- (BOOL)handlePageEditableKeyCode:(int)keyCode
+                        modifiers:(unsigned long)mods
+                       characters:(NSString *)charsIgnoring;
 // Returns YES if the key was consumed by vim mode.
 - (BOOL)handleKeyDown:(NSEvent *)event inWebView:(BOOL)inWebView;
 // Foundation-only core of handleKeyDown:. The UI extracts the event's

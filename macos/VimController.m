@@ -58,9 +58,34 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     return YES;
 }
 
+// Input-mode key handling (port of input.c input_keypress): Ctrl-O enters a
+// one-shot normal command; while that is active, subsequent keys run through
+// the normal-mode parser until the command completes.
+- (BOOL)handlePageEditableKeyCode:(int)keyCode
+                        modifiers:(unsigned long)mods
+                       characters:(NSString *)charsIgnoring {
+    if (self.oneShotNormal) {
+        // Route the next key(s) through normal-mode; clear one-shot when the
+        // command is complete (not waiting for more keys).
+        [self handleKeyCode:keyCode modifiers:mods characters:charsIgnoring];
+        if (self.phase == HBPhaseStart) {
+            self.oneShotNormal = NO;
+        }
+        return YES;
+    }
+    // Ctrl-O (Ctrl + 'O') enters one-shot normal mode.
+    if ((mods & 1UL << 18) != 0 && keyCode == (int)'O') {
+        self.oneShotNormal = YES;
+        return YES;
+    }
+    // ESC is handled by the UI (blur); everything else goes to the page.
+    return NO;
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
+        _oneShotNormal = NO;
         _mode = VimModeNormal;
         _mapBuffer = [[NSMutableString alloc] init];
         [self resetParser];
@@ -77,6 +102,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 
 - (void)reset {
     self.mode = VimModeNormal;
+    self.oneShotNormal = NO;
     [self resetParser];
 }
 

@@ -788,6 +788,33 @@ static void test_controller_pass_keys_to_page(void) {
     TEST_ASSERT_TRUE([vc shouldPassKeysToPage:YES] == NO);
 }
 
+// Ctrl-O one-shot normal command from a page text field (input.c
+// input_keypress): Ctrl-O marks a pending one-shot; the next normal key is
+// routed through normal-mode and then the flag clears.
+static void test_controller_one_shot_normal(void) {
+    BehavSpy *spy = newSpy();
+    VimController *vc = newVc(spy);
+
+    // Ctrl-O enters one-shot (consumed); no normal command yet.
+    vc.mode = VimModeNormal;
+    vc.oneShotNormal = NO;
+    TEST_ASSERT_TRUE([vc handlePageEditableKeyCode:(int)'O' modifiers:(1UL<<18) characters:@"O"] == YES);
+    TEST_ASSERT_TRUE(vc.oneShotNormal == YES);
+
+    // Next key routed through normal mode (e.g. 'j' scroll): consumed, and
+    // the one-shot clears once the command completes.
+    [spy.calls removeAllObjects];
+    TEST_ASSERT_TRUE([vc handlePageEditableKeyCode:(int)'j' modifiers:0 characters:@"j"] == YES);
+    TEST_ASSERT_TRUE(vc.oneShotNormal == NO);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"scroll:j:0"] == YES
+                     || [spy.calls containsObject:@"scroll:j:1"] == YES);
+
+    // Without one-shot and without Ctrl-O, page keys are NOT consumed.
+    vc.oneShotNormal = NO;
+    TEST_ASSERT_TRUE([vc handlePageEditableKeyCode:(int)'a' modifiers:0 characters:@"a"] == NO);
+    TEST_ASSERT_TRUE(vc.oneShotNormal == NO);
+}
+
 static void test_controller_search_dir_and_count(void) {
     BehavSpy *spy = newSpy();
     VimController *vc = newVc(spy);
@@ -1322,6 +1349,7 @@ int run_behavior_main(void) {
 
     RUN_TEST(test_controller_invoke_handlers);
     RUN_TEST(test_controller_pass_keys_to_page);
+    RUN_TEST(test_controller_one_shot_normal);
     RUN_TEST(test_controller_search_dir_and_count);
     RUN_TEST(test_controller_marks);
     RUN_TEST(test_controller_cmdline_and_input_open);

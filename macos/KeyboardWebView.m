@@ -209,14 +209,30 @@ static NSString *const GVimJS =
 - (void)keyDown:(NSEvent *)event {
     VimController *vim = [self.vbDelegate vimControllerForView:self];
     if (vim && [vim shouldPassKeysToPage:_editableFocusActive]) {
-        // A text input is focused: allow typing to reach the page. ESC blurs
-        // the field and returns to vim normal mode.
+        // A text input is focused. Handle input-mode keys (Ctrl-O one-shot
+        // normal, ESC blur) first; otherwise let typing reach the page.
         NSString *cs = event.charactersIgnoringModifiers;
-        if (cs.length && [cs characterAtIndex:0] == 27) {
+        unichar c = cs.length ? [cs characterAtIndex:0] : 0;
+        if (c == 27) {
             [self evaluateJavaScript:@"document.activeElement&&document.activeElement.blur?document.activeElement.blur():0;"
                       completionHandler:nil];
             _editableFocusActive = NO;
             return;
+        }
+        int keyCode = (int)c;
+        // Ctrl-O one-shot: intercept when Ctrl held.
+        if ((event.modifierFlags & NSEventModifierFlagControl) != 0) {
+            if ([vim handlePageEditableKeyCode:keyCode
+                                     modifiers:(unsigned long)event.modifierFlags
+                                    characters:cs]) {
+                return;
+            }
+        } else if (vim.oneShotNormal) {
+            if ([vim handlePageEditableKeyCode:keyCode
+                                     modifiers:0
+                                    characters:cs]) {
+                return;
+            }
         }
         [super keyDown:event];
         return;
