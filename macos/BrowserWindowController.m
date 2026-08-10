@@ -72,6 +72,8 @@ static const CGFloat kStatusHeight = 24.0;
         window.delegate = self;
         [window center];
         [self newTabInWindow];
+        // Apply dark-mode/fullscreen/show-titlebar from the config on launch.
+        [self applyChromeSettings];
     }
     return self;
 }
@@ -420,6 +422,15 @@ static const CGFloat kStatusHeight = 24.0;
         self.window.styleMask = sm | NSWindowStyleMaskTitled;
     } else if (!show && (sm & NSWindowStyleMaskTitled)) {
         self.window.styleMask = sm & ~NSWindowStyleMaskTitled;
+    }
+    // dark-mode: force the window (and so WKWebView content) into dark
+    // appearance; prefers-color-scheme on pages follows the app appearance.
+    NSAppearance *dark = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    NSAppearance *normal = nil;
+    if ([cfg getBool:@"dark-mode" defaultValue:NO]) {
+        self.window.appearance = dark;
+    } else if (self.window.appearance == dark) {
+        self.window.appearance = normal;
     }
 }
 
