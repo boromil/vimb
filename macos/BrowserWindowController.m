@@ -471,8 +471,75 @@ static const CGFloat kStatusHeight = 24.0;
     }] resume];
 }
 - (void)exRegisterList {
-    NSString *hist = [[VimbConfig shared].commandStore lines].firstObject ?: @"";
-    [self showMessage:[NSString stringWithFormat:@"registers: \":%@@\"", hist] error:NO];
+    NSMutableString *str = [NSMutableString stringWithString:@"-- Register --"];
+    NSString *dquote = [self.registers get:'"'];
+    if (dquote.length) { [str appendFormat:@"\n\"\"   %@", dquote]; }
+    // ':' command-line register holds the last executed ex command.
+    NSString *cmd = [[VimbConfig shared].commandStore lines].firstObject ?: @"";
+    if (cmd.length) { [str appendFormat:@"\n\":   %@", cmd]; }
+    // Named registers 0-9, a-z, A-Z (only those that are filled).
+    for (unichar c = '0'; c <= '9'; c++) {
+        NSString *val = [self.registers get:c];
+        if (val.length) { [str appendFormat:@"\n\"%C   %@", c, val]; }
+    }
+    for (unichar c = 'a'; c <= 'z'; c++) {
+        NSString *val = [self.registers get:c];
+        if (val.length) { [str appendFormat:@"\n\"%C   %@", c, val]; }
+    }
+    for (unichar c = 'A'; c <= 'Z'; c++) {
+        NSString *val = [self.registers get:c];
+        if (val.length) { [str appendFormat:@"\n\"%C   %@", c, val]; }
+    }
+    [self showMessage:str error:NO];
+}
+
+- (void)exSource:(NSString *)path {
+    // :source [file] — default to the rc config file when no path given.
+    NSString *file = [path stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (file.length == 0) { file = [[VimbConfig shared] historyCommand]; }
+    file = [file stringByExpandingTildeInPath];
+    NSString *content = [NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil];
+    if (!content) {
+        [self showMessage:[NSString stringWithFormat:@"cannot source %@", file] error:YES];
+        return;
+    }
+    NSUInteger count = 0;
+    for (NSString *raw in [content componentsSeparatedByString:@"\n"]) {
+        NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (line.length == 0 || [line hasPrefix:@"\""] || [line hasPrefix:@"#"]) { continue; }
+        [self.exEngine runCommand:line];
+        count++;
+    }
+    [self showMessage:[NSString stringWithFormat:@"sourced %lu command%@ from %@",
+                        (unsigned long)count, count == 1 ? @"" : @"s", file] error:NO];
+}
+
+- (void)exQueue:(NSString *)cmd arg:(NSString *)arg {
+    VimbStorage *qs = [VimbConfig shared].queueStore;
+    if ([cmd isEqualToString:@"qclear"]) {
+        [qs clear];
+        [self showMessage:@"queue cleared" error:NO];
+        return;
+    }
+    if ([cmd isEqualToString:@"qpop"]) {
+        NSString *url = [qs popLast];
+        if (url.length == 0) {
+            [self showMessage:@"queue is empty" error:YES];
+            return;
+        }
+        // Load the front of the queue (and record it in history like :open).
+        [self exOpen:url newTab:NO];
+        return;
+    }
+    // qpush / qunshift both add a url. vimb's storage only keeps front/bottom
+    // ordering; push to the front.
+    NSString *url = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (url.length == 0) {
+        [self showMessage:[cmd isEqualToString:@"qpush"] ? @"qpush requires a url" : @"qunshift requires a url" error:YES];
+        return;
+    }
+    [qs prepend:url max:NSUIntegerMax];
+    [self showMessage:[NSString stringWithFormat:@"queued %@", url] error:NO];
 }
 - (void)exShowMessages { [self showMessage:@"no messages" error:NO]; }
 

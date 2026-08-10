@@ -22,6 +22,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)exMessage:(NSString *)msg error:(BOOL)error;
 - (void)exSavePage:(nullable NSString *)path;
 - (void)exRegisterList;
+- (void)exSource:(nullable NSString *)path;
+- (void)exQueue:(NSString *)cmd arg:(nullable NSString *)arg;
 - (void)exShowMessages;
 - (void)exBookmarkAdd:(NSString *)url title:(NSString *)title;
 - (void)exBookmarkRemove:(NSString *)match;

@@ -31,7 +31,7 @@ typedef NS_ENUM(NSInteger, ExCmd) {
             @[@"normal", @"eval"],
             @[@"open", @"open"],
             @[@"quit", @"quit"], @[@"quitall", @"quitall"],
-            @[@"qunshift", @"message"], @[@"qclear", @"message"], @[@"qpop", @"message"], @[@"qpush", @"message"],
+            @[@"qunshift", @"queue"], @[@"qclear", @"queue"], @[@"qpop", @"queue"], @[@"qpush", @"queue"],
             @[@"register", @"register"],
             @[@"save", @"save"],
             @[@"set", @"set"],
@@ -163,8 +163,12 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     }
     if ([type isEqualToString:@"map"]) { return [self handleMapCommand:full arg:arg]; }
     if ([type isEqualToString:@"unmap"]) { return [self handleUnmapCommand:full arg:arg]; }
-    if ([type isEqualToString:@"source"]) { [a exMessage:@"source: not yet supported on native" error:YES]; return NO; }
-    if ([type isEqualToString:@"shortcut"]) { [a exMessage:@"shortcut: use :shortcut-add" error:YES]; return NO; }
+    if ([type isEqualToString:@"source"]) {
+        [a exSource:arg];
+        return NO;
+    }
+    if ([type isEqualToString:@"shortcut"]) { return [self handleShortcutCommand:full arg:arg actor:a]; }
+    if ([type isEqualToString:@"queue"]) { [a exQueue:full arg:arg]; return NO; }
     if ([type isEqualToString:@"bookmark"]) {
         NSString *fullName = full; // bma/bmr
         NSString *rest = arg;
@@ -248,6 +252,47 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     BOOL removed = [[VimbConfig shared] removeMappingForMode:mode lhs:lhs];
     if (!removed) {
         // Not an error in vim; keep the command line quiet as vimb does.
+    }
+    return NO;
+}
+
+// :shortcut-add <name> <url> / :shortcut-default <name> / :shortcut-remove <name>
+- (BOOL)handleShortcutCommand:(NSString *)full arg:(NSString *)arg actor:(id<VimbExActor>)a {
+    if ([full isEqualToString:@"shortcut-add"]) {
+        NSArray<NSString *> *p = [self tokenize:arg];
+        if (p.count < 1) {
+            [a exMessage:@"shortcut-add requires a name and a url" error:YES];
+            return NO;
+        }
+        NSString *key = p[0];
+        // The url is the remainder of the line (may contain spaces). Accept
+        // both "name url" and vimb's legacy "name=url" syntax.
+        NSString *rest = arg.length > key.length ? [arg substringFromIndex:key.length] : @"";
+        rest = [rest stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([rest hasPrefix:@"="]) { rest = [rest substringFromIndex:1]; }
+        NSString *url = [rest stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (key.length == 0 || url.length == 0) {
+            [a exMessage:@"shortcut-add requires a name and a url" error:YES];
+            return NO;
+        }
+        [VimbConfig shared].shortcuts[key] = url;
+        [a exMessage:[NSString stringWithFormat:@"shortcut %@ = %@", key, url] error:NO];
+    } else {
+        NSString *key = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (key.length == 0) {
+            [a exMessage:[full containsString:@"remove"]
+                ? @"shortcut-remove requires a name"
+                : @"shortcut-default requires a name" error:YES];
+            return NO;
+        }
+        if ([full isEqualToString:@"shortcut-default"]) {
+            [VimbConfig shared].defaultShortcut = key;
+            [a exMessage:[NSString stringWithFormat:@"default shortcut is %@", key] error:NO];
+        } else { // shortcut-remove
+            BOOL removed = [VimbConfig shared].shortcuts[key] != nil;
+            [[VimbConfig shared].shortcuts removeObjectForKey:key];
+            [a exMessage:removed ? @"shortcut removed" : @"shortcut not found" error:!removed];
+        }
     }
     return NO;
 }
