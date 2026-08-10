@@ -146,6 +146,9 @@ static const NSString *COOKIE_ACCEPT = @"ask";
     self.shortcuts[@"dd"] = @"https://duckduckgo.com/?q=$0";
     self.defaultShortcut = @"dl";
 
+    // Default home page is the selected search engine's main page.
+    self.settings[@"home-page"] = [self searchEngineMainPage];
+
     // download path
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDownloadsDirectory, NSUserDomainMask, YES);
     if (paths.firstObject) {
@@ -184,6 +187,23 @@ static const NSString *COOKIE_ACCEPT = @"ask";
     NSString *s = self.shortcuts[input];
     if (!s) { return nil; }
     return s;
+}
+
+- (NSString *)searchEngineMainPage {
+    NSString *url = self.shortcuts[self.defaultShortcut] ?: @"https://duckduckgo.com/html/?q=$0";
+    // Strip the query component (e.g. "?q=$0") to get the engine's main page.
+    NSRange q = [url rangeOfString:@"?"];
+    if (q.location != NSNotFound) {
+        url = [url substringToIndex:q.location];
+    }
+    if (url.length == 0) { url = @"about:blank"; }
+    return url;
+}
+
+- (NSString *)searchURLForQuery:(NSString *)query {
+    NSString *url = self.shortcuts[self.defaultShortcut] ?: @"https://duckduckgo.com/html/?q=$0";
+    NSString *encoded = [query stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
+    return [url stringByReplacingOccurrencesOfString:@"$0" withString:encoded];
 }
 
 - (NSString *)historyCommand {

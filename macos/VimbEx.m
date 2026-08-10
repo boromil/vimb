@@ -288,6 +288,9 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         }
         if ([full isEqualToString:@"shortcut-default"]) {
             [VimbConfig shared].defaultShortcut = key;
+            // The default opened page follows the selected search engine.
+            [VimbConfig shared].settings[@"home-page"] =
+                [[VimbConfig shared] searchEngineMainPage];
             [a exMessage:[NSString stringWithFormat:@"default shortcut is %@", key] error:NO];
         } else { // shortcut-remove
             BOOL removed = [VimbConfig shared].shortcuts[key] != nil;

@@ -62,6 +62,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Shortcuts (e.g. "dd" -> "https://duckduckgo.com/?q=$0")
 - (nullable NSString *)resolveShortcut:(NSString *)input;
+// The default search engine's main page URL (defaultShortcut with any
+// query suffix stripped), e.g. "https://duckduckgo.com/html/".
+- (NSString *)searchEngineMainPage;
+// Search URL for a query using the default engine (substitutes $0).
+- (NSString *)searchURLForQuery:(NSString *)query;
 - (NSString *)historyCommand;   // config file path (rc)
 - (void)sourceConfigFile;
 @end

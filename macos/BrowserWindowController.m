@@ -294,9 +294,9 @@ static const CGFloat kStatusHeight = 24.0;
     if (r.location == NSNotFound && ![s hasPrefix:@"about:"] && ![s hasPrefix:@"file:"]) {
         BOOL hasSpace = [s rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]].location != NSNotFound;
         if (hasSpace) {
-            // Treat as a search query.
-            NSString *enc = [s stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
-            return [NSURL URLWithString:[NSString stringWithFormat:@"https://duckduckgo.com/?q=%@", enc]];
+            // Treat as a search query using the default search engine.
+            NSURL *u = [NSURL URLWithString:[[VimbConfig shared] searchURLForQuery:s]];
+            return u ?: [NSURL URLWithString:@"about:blank"];
         }
         if (![s containsString:@"."]) {
             // Likely a host without dot; still try loading.
