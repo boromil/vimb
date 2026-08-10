@@ -23,6 +23,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimStop;
 - (void)vimOpenURL:(nullable NSString *)urlValue inNewTab:(BOOL)newTab;
 - (void)vimOpenHome;                       // 'U'/'u' reopen last closed page
+- (void)vimOpenHomePage:(BOOL)newTab;      // gh / gH: go to home-page
 - (void)vimGoHomeURL;                      // 'gu'/'gU' go up one path segment
 - (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode;   // handle ':' / '/' / '?' / "o"/"t" opens
 - (void)vimSearch:(NSString *)query forward:(BOOL)forward;

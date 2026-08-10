@@ -581,7 +581,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
             [d vimScrollMode:'g' count:(NSUInteger)cnt];
             return HBResultComplete;
         case 'h': case 'H':
-            if (k2 == 'H') { /* open homepage / new tab? gH goes home */ [d vimOpenHome]; }
+            // gH -> home-page in a new tab, gh -> home-page in current tab.
+            [d vimOpenHomePage:(k2 == 'H')];
             return HBResultComplete;
         case 'i':
             [d vimFocusInput];

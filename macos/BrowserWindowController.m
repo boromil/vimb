@@ -1061,6 +1061,13 @@ static const CGFloat kStatusHeight = 24.0;
     [self loadURL:start inNewTab:NO];
 }
 
+- (void)vimOpenHomePage:(BOOL)newTab {
+    // gh / gH: navigate to the configured home-page (current / new tab).
+    NSString *start = [[VimbConfig shared].settings objectForKey:@"home-page"];
+    if (![start isKindOfClass:[NSString class]] || !start.length) { start = @"about:blank"; }
+    [self loadURL:start inNewTab:newTab];
+}
+
 - (void)vimGoHomeURL {
     // Go up one path segment (vimb normal_descent).
     NSURL *u = self.activeTab.webView.URL;

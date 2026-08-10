@@ -37,6 +37,7 @@ static NSString *S(unichar c) {
 - (void)vimStop { [self record:@"stop"]; }
 - (void)vimOpenURL:(NSString *)urlValue inNewTab:(BOOL)newTab { [self record:[NSString stringWithFormat:@"open:%d:%@", newTab, urlValue]]; }
 - (void)vimOpenHome { [self record:@"home"]; }
+- (void)vimOpenHomePage:(BOOL)newTab { [self record:[NSString stringWithFormat:@"homepage:%d", newTab]]; }
 - (void)vimGoHomeURL { [self record:@"gohomeurl"]; }
 - (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode { [self record:[NSString stringWithFormat:@"prompt:%ld:%@", (long)mode, prompt]]; }
 - (void)vimSearch:(NSString *)query forward:(BOOL)forward { [self record:[NSString stringWithFormat:@"search:%d:%@", forward, query]]; }
@@ -975,8 +976,8 @@ static void test_controller_gcmd(void) {
     BehavSpy *spy = newSpy();
     VimController *vc = newVc(spy);
     feed(vc, @"gg"); TEST_ASSERT_TRUE([spy.calls containsObject:@"scroll:g:0"]);
-    feed(vc, @"gh"); TEST_ASSERT_TRUE(![spy.calls containsObject:@"gohomeurl"]);
-    feed(vc, @"gH"); TEST_ASSERT_TRUE([spy.calls containsObject:@"home"]);
+    feed(vc, @"gh"); TEST_ASSERT_TRUE([spy.calls containsObject:@"homepage:0"]);
+    feed(vc, @"gH"); TEST_ASSERT_TRUE([spy.calls containsObject:@"homepage:1"]);
     feed(vc, @"gi"); TEST_ASSERT_TRUE([spy.calls containsObject:@"focusinput"]);
     feed(vc, @"gt"); TEST_ASSERT_TRUE([spy.calls containsObject:@"nexttab"]);
     feed(vc, @"gT"); TEST_ASSERT_TRUE([spy.calls containsObject:@"prevtab"]);
