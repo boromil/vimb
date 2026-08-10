@@ -5,7 +5,7 @@
 - (BOOL)uriPlausible:(NSString *)path;
 @end
 
-static const NSString *DOWNLOAD_COMMAND = @"/usr/bin/xdg-open %s 2>/dev/null";
+static const NSString *DOWNLOAD_COMMAND = @"/usr/bin/open %s";
 static const NSString *HINT_KEYS = @"abcdefghijklmnopqrstuvwxyz";
 static const NSString *HOME_PAGE = @"about:blank";
 static const NSString *COOKIE_ACCEPT = @"ask";

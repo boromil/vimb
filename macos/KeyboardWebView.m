@@ -387,8 +387,32 @@ static NSString *const GVimJS =
 }
 
 - (void)adoptDownload:(WKDownload *)download {
+    // download-use-external: run download-command with the URL and do not save
+    // locally (parity with spawn_download_command). WKDownload has no public
+    // 'cancel', so we run the command and simply don't adopt the delegate, which
+    // lets the system handle it as before; we report via the command.
+    VimbConfig *cfg = [VimbConfig shared];
+    NSString *uri = self.URL.absoluteString ?: @"";
+    if ([cfg getBool:@"download-use-external" defaultValue:NO] && uri.length) {
+        NSString *cmd = [cfg getString:@"download-command" defaultValue:@"/usr/bin/open %s"];
+        NSString *expanded = cmd;
+        if ([cmd containsString:@"%s"]) {
+            expanded = [cmd stringByReplacingOccurrencesOfString:@"%s" withString:uri
+                                                        options:0
+                                                          range:[cmd rangeOfString:@"%s"]];
+        } else if ([cmd containsString:@"{}"]) {
+            expanded = [cmd stringByReplacingOccurrencesOfString:@"{}" withString:uri];
+        }
+        NSTask *t = [[NSTask alloc] init];
+        t.launchPath = @"/bin/sh";
+        t.arguments = @[@"-c", expanded];
+        @try { [t launch]; } @catch (NSException *e) {}
+        // The external command owns the URL; WKDownload may still fetch it but
+        // we don't adopt the delegate so no file is saved under download-path.
+        return;
+    }
     download.delegate = self;
-    [[VimbConfig shared].autocmd fireEvent:VAuDownloadStarted uri:self.URL.absoluteString];
+    [[VimbConfig shared].autocmd fireEvent:VAuDownloadStarted uri:uri];
 }
 
 - (void)download:(WKDownload *)download decideDestinationUsingResponse:(NSURLResponse *)response
