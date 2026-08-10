@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+#
+# create-release - cut a new vimb release.
+#
+# Mirrors the release process used historically in this repo (see git log for
+# the "Released version X.Y.Z" commits):
+#   1. bump the version in the Makefile
+#   2. move the CHANGELOG.md [Unreleased] section to a "## [X.Y.Z]" heading and
+#      rewire the [Unreleased] compare link plus the new version link
+#   3. commit "Released version X.Y.Z" and tag the bare version (no v prefix)
+#   4. print the push command (master --tags) and a GitHub release template
+#      using the extracted release notes
+#
+# With --dry-run nothing is modified; diffs and the pending commands are printed.
+#
+set -euo pipefail
+
+REPO_URL="https://github.com/fanglingsu/vimb"
+BRANCH="master"
+CHANGELOG="CHANGELOG.md"
+MAKEFILE="Makefile"
+
+usage() {
+    cat >&2 <<EOF
+Usage: $0 <version> [--dry-run]
+
+  version    e.g. 3.7.2 (bare X.Y.Z, no leading v)
+  --dry-run  preview changes and commands, modify nothing
+EOF
+    exit 1
+}
+
+die() {
+    echo "Error: $1" >&2
+    exit 1
+}
+
+# argument parsing
+version=""
+dry_run=0
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run|--dryrun)
+            dry_run=1
+            ;;
+        -*)
+            if [[ -z "$version" ]]; then
+                usage
+            fi
+            ;;
+        *)
+            [[ -n "$version" ]] && usage
+            version="$arg"
+            ;;
+    esac
+done
+
+if [[ -z "$version" ]]; then
+    usage
+fi
+
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    die "version must be in format X.Y.Z (e.g. 3.7.2), got '${version}'"
+fi
+
+if (( dry_run )); then
+    echo "DRY RUN — no changes will be made"
+    echo
+fi
+
+# repository sanity
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git work tree"
+command -v git >/dev/null || die "git not found"
+
+[[ -f "$CHANGELOG" ]] || die "missing $CHANGELOG"
+[[ -f "$MAKEFILE" ]] || die "missing $MAKEFILE"
+
+changelog=$(<"$CHANGELOG")
+makefile=$(<"$MAKEFILE")
+
+# The [Unreleased] heading must exist.
+if ! grep -q '^## \[Unreleased\]$' <<<"$changelog"; then
+    die "[Unreleased] heading not found in $CHANGELOG"
+fi
+
+# Refuse to re-release an already released version.
+if grep -q "^## \[${version}\]$" <<<"$changelog"; then
+    die "version ${version} already exists in $CHANGELOG"
+fi
+
+# Existing [Unreleased] compare link, e.g.
+#   [Unreleased]: https://github.com/fanglingsu/vimb/compare/3.7.1...master
+old_ver=""
+old_link=""
+while IFS= read -r line; do
+    if [[ "$line" =~ ^\[Unreleased\]:\ .*\/compare\/([0-9]+\.[0-9]+\.[0-9]+)\.\.\.${BRANCH}$ ]]; then
+        old_ver="${BASH_REMATCH[1]}"
+        old_link="$line"
+        break
+    fi
+done <<<"$changelog"
+
+if [[ -z "$old_ver" ]]; then
+    die "[Unreleased] compare link not found in $CHANGELOG"
+fi
+if [[ "$old_ver" == "$version" ]]; then
+    die "[Unreleased] link already points to ${version}"
+fi
+
+# Extract the [Unreleased] section body to serve as the release notes.  The
+# section runs from the [Unreleased] heading to the next "## " heading
+# (usually the newest released version).  Trailing blank lines are trimmed.
+release_notes="$(awk '
+    /^## \[Unreleased\]$/ { insec = 1; next }
+    insec && /^## / { exit }
+    insec { print }
+' <<<"$changelog")"
+release_notes="$(printf '%s\n' "$release_notes" | sed '/^[[:space:]]*$/d')"
+
+# Rewrite the changelog: insert the new version heading after [Unreleased]
+# and rewire the compare links.
+new_link="[Unreleased]: ${REPO_URL}/compare/${version}...${BRANCH}"
+version_link="[${version}]: ${REPO_URL}/compare/${old_ver}...${version}"
+
+new_changelog="$(awk -v heading="## [${version}]" '
+    /^## \[Unreleased\]$/ {
+        print
+        print ""
+        print heading
+        next
+    }
+    { print }
+' <<<"$changelog")"
+
+# The link-line replacement must be applied after heading insertion; do it
+# with sed so we replace only the exact [Unreleased] link definition line.
+new_changelog="$(sed \
+    -e "s|^\[Unreleased\]: .*|${new_link}\n${version_link}|" \
+    <<<"$new_changelog")"
+
+# Bump the version in the Makefile.
+old_version_line=""
+
+awk_makefile() {
+    awk -v newver="$version" '
+        /^version[[:space:]]*=/ && !done {
+            printf "version = %s\n", newver
+            done = 1
+            next
+        }
+        { print }
+    ' <<<"$makefile"
+}
+
+if ! grep -qE '^version[[:space:]]*=' <<<"$makefile"; then
+    die "no 'version =' line found in $MAKEFILE"
+fi
+old_version_line="$(grep -m1 -E '^version[[:space:]]*=' <<<"$makefile")"
+new_makefile="$(awk_makefile)"
+
+# Show / apply the changes.
+echo "$CHANGELOG"
+if (( dry_run )); then
+    tmp="$(mktemp)"
+    printf '%s\n' "$new_changelog" >"$tmp"
+    diff --unified=3 --label "$CHANGELOG (current)" --label "$CHANGELOG (after)" "$CHANGELOG" "$tmp" || true
+    rm -f "$tmp"
+else
+    printf '%s\n' "$new_changelog" >"$CHANGELOG"
+    echo "  Updated: inserted ## [${version}] heading and rewired compare links"
+fi
+
+echo "$MAKEFILE"
+if (( dry_run )); then
+    tmp="$(mktemp)"
+    printf '%s\n' "$new_makefile" >"$tmp"
+    if diff --unified=3 --label "$MAKEFILE (current)" --label "$MAKEFILE (after)" "$MAKEFILE" "$tmp"; then
+        echo "  (version already up to date)"
+    fi
+    rm -f "$tmp"
+else
+    printf '%s\n' "$new_makefile" >"$MAKEFILE"
+    echo "  Updated: ${old_version_line} -> version = ${version}"
+fi
+
+# GitHub release template using the changelog-derived notes.
+cat <<EOF
+Run by yourself:
+
+git add $CHANGELOG $MAKEFILE
+git commit -m "Released version $version"
+git tag $version
+git push origin $BRANCH --tags
+
+Create the release "${version}" in github ${REPO_URL}/releases/new?tag=${version}
+Release title: ${version}
+Release description:
+${release_notes}
+EOF

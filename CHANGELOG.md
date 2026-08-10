@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [4.0.0]
 ### Added
 * `FEATURE_NO_TABS` in src/config.h to allow the user to compile vimb without
   tab support - which is useful in when the tabs are handles by the
@@ -405,7 +407,8 @@ deprecated and removed in WebKitGTK 6.0.
   cookie file
 * Fixed none POSIX `echo -n` call
 
-[Unreleased]: https://github.com/fanglingsu/vimb/compare/3.7.0...master
+[Unreleased]: https://github.com/fanglingsu/vimb/compare/4.0.0...master
+[4.0.0]: https://github.com/fanglingsu/vimb/compare/3.7.0...4.0.0
 [3.7.1]: https://github.com/fanglingsu/vimb/compare/3.7.0...3.7.1
 [3.7.0]: https://github.com/fanglingsu/vimb/compare/3.6.0...3.7.0
 [3.6.0]: https://github.com/fanglingsu/vimb/compare/3.5.0...3.6.0

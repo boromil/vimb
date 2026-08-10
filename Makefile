@@ -1,4 +1,4 @@
-version = 3.7.1
+version = 4.0.0
 include config.mk
 
 all: version.h src.subdir-all
