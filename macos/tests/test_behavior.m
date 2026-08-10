@@ -639,6 +639,25 @@ static void test_ex_ambiguous_command(void) {
     TEST_ASSERT_TRUE(ex != nil);
 }
 
+// Parity with ex.c parse_command_name: ambiguous abbreviations resolve to the
+// FIRST table command whose name has the input prefix; exact names win.
+static void test_ex_abbreviation_resolution(void) {
+    VimbEx *ex = [[VimbEx alloc] init];
+    // ":q" -> quit (first of quit/quitall/qpush...).
+    TEST_ASSERT_EQ_STR([ex matchCommand:@"q"], @"quit");
+    // ":t" -> tabopen (first of the tab* family).
+    TEST_ASSERT_EQ_STR([ex matchCommand:@"t"], @"tabopen");
+    // ":o" -> open (or the o alias; both resolve to open semantics).
+    TEST_ASSERT_TRUE([[ex matchCommand:@"o"] isEqualToString:@"o"] ||
+                     [[ex matchCommand:@"o"] isEqualToString:@"open"]);
+    // Exact names resolve to themselves.
+    TEST_ASSERT_EQ_STR([ex matchCommand:@"quitall"], @"quitall");
+    TEST_ASSERT_EQ_STR([ex matchCommand:@"register"], @"register");
+    // No match -> nil.
+    TEST_ASSERT_TRUE([ex matchCommand:@""] == nil);
+    TEST_ASSERT_TRUE([ex matchCommand:@"zzz"] == nil);
+}
+
 #pragma mark - VimbHandler (parity: src/handler.c)
 
 static void test_download_directory_setting(void) {
@@ -1346,6 +1365,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_ex_map_commands_all_modes);
     RUN_TEST(test_ex_unknown_command);
     RUN_TEST(test_ex_ambiguous_command);
+    RUN_TEST(test_ex_abbreviation_resolution);
 
     RUN_TEST(test_controller_invoke_handlers);
     RUN_TEST(test_controller_pass_keys_to_page);

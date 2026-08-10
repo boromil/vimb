@@ -59,26 +59,27 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     return names;
 }
 
-// Matches a possibly-abbreviated command name against the table. An exact
-// match always wins (so ":quit" resolves to quit, not the ambiguous
-// quitall). Otherwise a single unique prefix match is accepted; multiple
-// prefix matches are reported as ambiguous (nil), mirroring vim's ":cmd<abbr>"
-// behavior without surprising the common, exact commands.
+// Matches a possibly-abbreviated command name against the table, mirroring
+// ex.c parse_command_name: the FIRST table command whose name has the typed
+// string as a prefix is selected (so ambiguous abbreviations resolve to the
+// first-defined command, e.g. ":q" -> quit, ":t" -> tabopen). Returns nil
+// when no command matches.
 - (NSString *)matchCommand:(NSString *)name {
-    // Exact match always wins (so ":quit" resolves to quit, not quitall, and
-    // ":tabp" to tabp, not tabprevious). Otherwise a single unique prefix
-    // match is accepted; multiple prefix matches are ambiguous (nil).
+    if (name.length == 0) { return nil; }
+    // De-duplicate aliases: prefer the longest/first full name so an exact
+    // command still resolves (e.g. "open" -> open, not the "o" alias).
+    NSString *result = nil;
     for (NSArray<NSString *> *r in _table) {
-        if ([r[0] isEqualToString:name]) { return r[0]; }
-    }
-    NSString *prefixMatch = nil;
-    for (NSArray<NSString *> *r in _table) {
-        if ([r[0] hasPrefix:name]) {
-            if (prefixMatch) { return nil; } // ambiguous
-            prefixMatch = r[0];
+        NSString *cmd = r[0];
+        if (cmd.length >= name.length && [cmd hasPrefix:name] && cmd.length >= name.length) {
+            if (result == nil || cmd.length == name.length || result.length < cmd.length) {
+                // Prefer an exact-length match, else first in table order.
+                if (cmd.length == name.length) { return cmd; }
+                if (result == nil) { result = cmd; }
+            }
         }
     }
-    return prefixMatch;
+    return result;
 }
 
 - (NSString *)expandToken:(NSString *)token {

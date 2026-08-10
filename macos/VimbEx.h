@@ -36,6 +36,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)runCommand:(NSString *)command;
 - (NSString *)expandToken:(NSString *)token;    // % / # expansion
 - (NSArray<NSString *> *)commandNames;
+// Resolve a possibly-abbreviated command name (parse_command_name semantics).
+- (nullable NSString *)matchCommand:(NSString *)name;
 @end
 
 NS_ASSUME_NONNULL_END
