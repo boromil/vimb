@@ -22,7 +22,10 @@ SRCS := main.m \
         BrowserWindowController.m \
         KeyboardWebView.m \
         TabView.m \
-        VimController.m
+        VimController.m \
+        VimbEngine.m \
+        VimbStorage.m \
+        VimbConfig.m
 
 OBJS := $(SRCS:.m=.o)
 
