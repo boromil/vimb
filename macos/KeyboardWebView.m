@@ -66,6 +66,45 @@ static NSString *const GVimJS =
     double _pendingMarkY;
 }
 
+// Builds a user script that injects a <style> element carrying the vimb
+// completion CSS settings as page CSS classes. Settings default to empty, so
+// the script is a harmless no-op unless overridden via :set. Escaped so the
+// CSS text cannot break out of the <style> element.
+- (NSString *)completionCSSScript {
+    VimbConfig *cfg = [VimbConfig shared];
+    NSDictionary *rules = @{
+        @".vimb-completion":            [cfg getString:@"completion-css"         defaultValue:@""],
+        @".vimb-completion-hover":      [cfg getString:@"completion-hover-css"   defaultValue:@""],
+        @".vimb-completion-selected":   [cfg getString:@"completion-selected-css" defaultValue:@""],
+    };
+    NSMutableString *css = [NSMutableString string];
+    [rules enumerateKeysAndObjectsUsingBlock:^(NSString *sel, NSString *style, BOOL *stop) {
+        (void)stop;
+        if (style.length == 0) { return; }
+        // Strip </style> / <style sequences to keep the injection well-formed.
+        NSString *s = style;
+        s = [s stringByReplacingOccurrencesOfString:@"</" withString:@"<\\/"];
+        [css appendFormat:@"%@{%@}\n", sel, s];
+    }];
+    if (css.length == 0) { return @""; }
+    // Return a valid (no-op when empty) user script source.
+    NSString *src = [NSString stringWithFormat:
+        @"(function(){var s=document.createElement('style');"
+         "s.type='text/css';s.appendChild(document.createTextNode(%@));"
+         "if(document.head){document.head.appendChild(s);}else{document.addEventListener('DOMContentLoaded',"
+         "function(){if(document.head)document.head.appendChild(s);});}})();",
+        [self jsStringLiteral:css]];
+    return src;
+}
+
+// JSON-encodes a string so it can be embedded as a JS string literal.
+- (NSString *)jsStringLiteral:(NSString *)str {
+    NSError *err = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:str options:0 error:&err];
+    if (err || !data) { return @"\"\""; }
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
 - (instancetype)initWithFrame:(NSRect)frame {
     WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
     config.preferences = [[WKPreferences alloc] init];
@@ -90,6 +129,17 @@ static NSString *const GVimJS =
                                                  injectionTime:WKUserScriptInjectionTimeAtDocumentStart
                                               forMainFrameOnly:NO];
     [ucc addUserScript:script];
+
+    // Port of vimb's completion-* CSS settings. The native completion dropdown
+    // isn't a page element, so instead of applying inline styles we expose the
+    // settings as CSS classes on the page for any consumer (a future native
+    // dropdown, or a site that opts in) to build on. Non-breaking: empty CSS
+    // settings produce a no-op stylesheet.
+    WKUserScript *cssScript = [[WKUserScript alloc] initWithSource:[self completionCSSScript]
+                                                    injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                                                 forMainFrameOnly:NO];
+    [ucc addUserScript:cssScript];
+
     [ucc addScriptMessageHandler:self name:@"vimb"];
     config.userContentController = ucc;
 

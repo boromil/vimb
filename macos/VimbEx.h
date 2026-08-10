@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)exQuit;
 - (void)exQuitAll;
 - (void)exEval:(NSString *)js;
+- (void)exShell:(NSString *)arg;
 - (void)exMessage:(NSString *)msg error:(BOOL)error;
 - (void)exSavePage:(nullable NSString *)path;
 - (void)exRegisterList;

@@ -430,12 +430,71 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)exQuit { [self.window close]; }
 - (void)exQuitAll { [NSApp terminate:nil]; }
 - (void)exEval:(NSString *)js {
+    __weak typeof(self) weakSelf = self;
     [self.activeTab.webView evaluateJavaScript:js completionHandler:^(id result, NSError *error) {
-        NSString *out = error ? error.localizedDescription : ([result isKindOfClass:[NSString class]] ? result : [result description]);
-        if (![result isKindOfClass:[NSNull class]] && result) {
-            dispatch_async(dispatch_get_main_queue(), ^{ [self showMessage:out error:error != nil]; });
+        if (error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf showMessage:[@"eval error: " stringByAppendingString:error.localizedDescription] error:YES];
+            });
+            return;
         }
+        // Map the JS result to a status string without crashing on null/undefined.
+        NSString *out = @"done";
+        if ([result isKindOfClass:[NSString class]]) {
+            out = ((NSString *)result).length ? result : @"done";
+        } else if ([result isKindOfClass:[NSNumber class]]) {
+            out = [result description];
+        } else if (![result isKindOfClass:[NSNull class]]) {
+            // Non-scalar objects (booleans, arrays, plain objects) are
+            // returned by WKWebView as their description / WKScriptValue.
+            out = [result description] ?: @"done";
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf showMessage:out error:NO];
+        });
     }];
+}
+- (void)exShell:(NSString *)arg {
+    NSString *trimmed = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (trimmed.length == 0) {
+        [self showMessage:@"shell: empty command" error:YES];
+        return;
+    }
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/bin/sh"];
+    task.arguments = @[ @"-c", trimmed ];
+    task.standardOutput = [NSPipe pipe];
+    task.standardError = [NSPipe pipe];
+    __weak typeof(self) weakSelf = self;
+    [task setTerminationHandler:^(NSTask *t) {
+        NSData *outData = [[t.standardOutput fileHandleForReading] readDataToEndOfFile];
+        NSData *errData = [[t.standardError fileHandleForReading] readDataToEndOfFile];
+        NSString *out = [[NSString alloc] initWithData:outData encoding:NSUTF8StringEncoding];
+        NSString *err = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding];
+        NSString *msg;
+        BOOL isError = NO;
+        if (err.length) {
+            msg = err;
+            isError = YES;
+        } else if (out.length) {
+            msg = out;
+        } else {
+            msg = [NSString stringWithFormat:@"shell exited %d", t.terminationStatus];
+        }
+        NSString *clean = [msg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (clean.length) {
+                [weakSelf showMessage:clean error:isError];
+            } else {
+                [weakSelf showMessage:[NSString stringWithFormat:@"shell exited %d", t.terminationStatus] error:NO];
+            }
+        });
+    }];
+    NSError *launchErr = nil;
+    [task launchAndReturnError:&launchErr];
+    if (launchErr) {
+        [self showMessage:[@"shell launch failed: " stringByAppendingString:launchErr.localizedDescription] error:YES];
+    }
 }
 - (void)exMessage:(NSString *)msg error:(BOOL)error {
     if (msg.length) { [self showMessage:msg error:error]; }
@@ -979,6 +1038,22 @@ static const CGFloat kStatusHeight = 24.0;
         [self.completionCycle removeAllObjects];
         self.completionPrefixLine = nil;
         self.completionIndex = 0;
+    }
+
+    // Incremental search (vim's 'incsearch'): while the user types a / or ?
+    // search, highlight matches live instead of waiting for Enter. Finding on
+    // an empty query would just clear the previous highlight, so skip it.
+    if (self.vim.mode == VimModeSearch && [[VimbConfig shared] incsearch]) {
+        NSString *line = self.commandField.stringValue;
+        if (line.length > 1) {
+            unichar p = [line characterAtIndex:0];
+            if (p == '/' || p == '?') {
+                NSString *query = [line substringFromIndex:1];
+                if (query.length > 0) {
+                    [self.activeTab.webView findString:query forwardDirection:(p == '/')];
+                }
+            }
+        }
     }
 }
 - (void)controlTextDidEndEditing:(NSNotification *)obj { }

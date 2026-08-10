@@ -35,7 +35,7 @@ typedef NS_ENUM(NSInteger, ExCmd) {
             @[@"register", @"register"],
             @[@"save", @"save"],
             @[@"set", @"set"],
-            @[@"shellcmd", @"message"], @[@"shellex", @"message"],
+            @[@"shellcmd", @"shell"], @[@"shellex", @"shell"],
             @[@"shortcut-add", @"shortcut"], @[@"shortcut-default", @"shortcut"], @[@"shortcut-remove", @"shortcut"],
             @[@"source", @"source"],
             @[@"tabopen", @"open"],
@@ -185,6 +185,7 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         }
         return NO;
     }
+    if ([type isEqualToString:@"shell"]) { [a exShell:arg]; return NO; }
     if ([type isEqualToString:@"message"]) { [a exMessage:@"" error:NO]; return NO; }
     return NO;
 }
