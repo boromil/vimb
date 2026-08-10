@@ -372,6 +372,20 @@ static NSString *replaceFirstPlaceholder(NSString *tmpl, NSInteger num, NSString
     return (CGFloat)(step * mult);
 }
 
+- (BOOL)shouldRecordURL:(NSString *)url {
+    if (!url || url.length == 0) { return NO; }
+    NSString *pattern = [self getString:@"histignore" defaultValue:@""];
+    if (pattern.length == 0) { return YES; }
+    NSError *err = nil;
+    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pattern
+                                                                        options:0 error:&err];
+    if (err || re == nil) { return YES; } // invalid regex -> record everything
+    NSRange hit = [re firstMatchInString:url options:0
+                                   range:NSMakeRange(0, url.length)].range;
+    // GTK4 logic: regexec==0 means a MATCH -> do NOT record.
+    return hit.location == NSNotFound;
+}
+
 - (NSString *)loadURI:(NSString *)input {
     NSString *path = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (path.length == 0) {

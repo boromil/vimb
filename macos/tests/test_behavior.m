@@ -650,6 +650,19 @@ static void test_download_directory_setting(void) {
     TEST_ASSERT_EQ_STR([c downloadsDirectory], @"/tmp/vimb-dl");
 }
 
+static void test_histignore_history_filter(void) {
+    VimbConfig *c = [[VimbConfig alloc] init];
+    // Empty histignore -> record everything.
+    [c applySetting:@"histignore" value:@""];
+    TEST_ASSERT_TRUE([c shouldRecordURL:@"https://anything.com"] == YES);
+    // Default-style youtube ignore.
+    [c applySetting:@"histignore" value:@".*youtube\\..*"];
+    TEST_ASSERT_TRUE([c shouldRecordURL:@"https://www.youtube.com/watch?v=x"] == NO);
+    TEST_ASSERT_TRUE([c shouldRecordURL:@"https://example.com/"] == YES);
+    // nil/empty url never recorded.
+    TEST_ASSERT_TRUE([c shouldRecordURL:@""] == NO);
+}
+
 static void test_scroll_step_from_settings(void) {
     VimbConfig *c = [[VimbConfig alloc] init];
     // Defaults: scroll-step 40, multiplier 1 -> 40.
@@ -1277,6 +1290,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_handler_add_remove_lookup);
     RUN_TEST(test_download_directory_setting);
     RUN_TEST(test_scroll_step_from_settings);
+    RUN_TEST(test_histignore_history_filter);
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
 

@@ -343,6 +343,7 @@ static const CGFloat kStatusHeight = 24.0;
 }
 
 - (void)recordHistory:(NSString *)url {
+    if (![[VimbConfig shared] shouldRecordURL:url]) { return; }
     [[VimbConfig shared].historyStore prepend:url max:(NSUInteger)[VimbConfig shared].historyMax];
 }
 

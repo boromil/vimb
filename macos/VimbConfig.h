@@ -87,6 +87,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)downloadsDirectory;
 // Effective scroll step in px: scroll-step * scroll-multiplier (parity).
 - (CGFloat)scrollStep;
+// Whether a URL should be recorded in history (i.e. does NOT match the
+// histignore regex). Port of the GTK4 histignore check in main.c.
+- (BOOL)shouldRecordURL:(NSString *)url;
 // Decide what to load for an open input (port of src/main.c vb_load_uri):
 // returns the direct URL, a search/shortcut URL, or an http:// fallback.
 - (NSString *)loadURI:(NSString *)input;
