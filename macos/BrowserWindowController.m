@@ -484,6 +484,19 @@ static const CGFloat kStatusHeight = 24.0;
         [self showMessage:payload[@"s"] ?: @"Page load error" error:YES];
     } else if ([t isEqualToString:@"download-done"]) {
         [self showMessage:@"Download finished" error:NO];
+    } else if ([t isEqualToString:@"hintyank"]) {
+        NSString *url = payload[@"url"] ?: @"";
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        [pb setString:url forType:NSPasteboardTypeString];
+        [self.registers set:url forKey:'"'];
+        [self showMessage:[NSString stringWithFormat:@"yanked %@", url] error:NO];
+    } else if ([t isEqualToString:@"hintopen"]) {
+        NSString *url = payload[@"url"] ?: @"";
+        if (url.length) {
+            [self loadURL:url inNewTab:YES];
+            [self showMessage:[NSString stringWithFormat:@"opened in new tab %@", url] error:NO];
+        }
     }
 }
 
@@ -632,6 +645,7 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)vimNewTab { [self newTabInWindow]; }
 - (void)vimCloseTab { [self closeActiveTab]; }
 - (void)vimToggleHints { [self.activeTab.webView toggleHints]; }
+- (void)vimEnterHints:(NSString *)mode { [self.activeTab.webView toggleHints:mode]; }
 - (void)vimHintKey:(NSString *)key { [self.activeTab.webView sendHintKey:key]; }
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error { [self showMessage:message error:error]; }
 - (void)vimFocusWebView {

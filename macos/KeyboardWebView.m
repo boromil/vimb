@@ -1,5 +1,9 @@
 #import "KeyboardWebView.h"
 
+// This view is created programmatically only (no nibs/coders), so the
+// designated-initializer consistency warnings don't apply.
+#pragma clang diagnostic ignored "-Wobjc-designated-initializers"
+
 // A tiny embedded JS helper injected as a user script. It provides scroll
 // primitives and a message bus bridged back to native via window.webkit.
 static NSString *const GVimJS =
@@ -59,6 +63,14 @@ static NSString *const GVimJS =
         [self addObserver:self forKeyPath:@"URL" options:0 context:NULL];
     }
     return self;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame configuration:(WKWebViewConfiguration *)configuration {
+    return [self initWithFrame:frame];
+}
+
+- (instancetype)initWithCoder:(NSCoder *)coder {
+    return [self initWithFrame:NSZeroRect];
 }
 
 - (void)dealloc {
@@ -176,17 +188,29 @@ static NSString *const GVimJS =
 #pragma mark - Hint mode
 
 - (void)toggleHints {
+    [self toggleHints:nil];
+}
+
+- (void)toggleHints:(NSString *)followMode {
+    // Map hint-mode char to a numeric action used by the JS overlay.
+    int modeCode = 0;                       // f/o -> click (follow)
+    if ([followMode isEqualToString:@"t"])      { modeCode = 2; } // new tab
+    else if ([followMode isEqualToString:@"o"]) { modeCode = 0; } // open
+    else if ([followMode isEqualToString:@"y"]) { modeCode = 3; } // yank url
+    else if ([followMode isEqualToString:@"i"]) { modeCode = 4; } // focus element
     NSString *js =
         @"(function(){"
         @" if(window.__vimb_hint_active){window.__vimb_hint_cleanup();return;}"
         @" var alpha=['a','b','c','d','f','g','h','j','k','l','m','n','p','q','r','s','t','u','v','w','x','y','z'];"
+        @" var mse=%d;"   // mode flag: 0..n
         @" window.__vimb_hint_alpha=alpha;"
         @" function lab(i){var s='',r=i;do{s=alpha[r%alpha.length]+s;r=Math.floor(r/alpha.length)-1;}while(r>=0);return s;}"
-        @" var sel='a[href],img,button,input[type=submit],input[type=button]';"
+        @" var sel='a[href],img,button,input[type=submit],input[type=button],textarea';"
         @" var els=Array.prototype.slice.call(document.querySelectorAll(sel));"
         @" if(els.length===0){window.webkit.messageHandlers.vimb.postMessage({t:'hintnone'});return;}"
         @" window.__vimb_hint_els=els;"
         @" window.__vimb_hint_match='';"
+        @" window.__vimb_hint_mode=mse;"
         @" var css=document.createElement('style');css.id='vimb-hint-css';"
         @" css.textContent='.vimb-hint-el{position:absolute;z-index:2147483647;padding:1px 4px;"
         @"   background:rgba(255,210,0,.95);color:#000;border-radius:2px;font:bold 12px monospace;"
@@ -202,31 +226,57 @@ static NSString *const GVimJS =
         @"   var s=document.getElementById('vimb-hint-css');if(s)s.remove();"
         @"   window.__vimb_hint_labels=[];window.__vimb_hint_els=[];window.__vimb_hint_match='';"
         @"   window.__vimb_hint_active=0;};"
+        @" window.__vimb_hint_follow=function(idx){"
+        @"   var el=window.__vimb_hint_els[idx];"
+        @"   if(!el)return;"
+        @"   var mode=window.__vimb_hint_mode;"
+        @"   if(mode==4){try{el.focus();}catch(e){} }"           // i
+        @"   else if(mode==3){var u=el.href||el.src||el.value||location.href;" // y
+        @"       window.webkit.messageHandlers.vimb.postMessage({t:'hintyank',url:u});}"
+        @"   else if(mode==2){var u=el.href||el.src||'';"        // t (new tab)
+        @"       window.webkit.messageHandlers.vimb.postMessage({t:'hintopen',url:u});"
+        @"       if(u){return;} }"                                // keep hints open in vimb
+        @"   else{try{el.click();}catch(e){}}"
+        @"   window.__vimb_hint_cleanup();"
+        @" };"
         @" window.__vimb_hint_type=function(ch){"
         @"   window.__vimb_hint_match+=String(ch);var m=window.__vimb_hint_match;"
         @"   var labs=window.__vimb_hint_labels;"
+        @"   if(m.length>1&&window.__vimb_hint_used==null){"
+        @"     window.__vimb_hint_used=1;"
+        @"     var seen={};var dups=0;"
+        @"     labs.forEach(function(d){var L=lab(+d.getAttribute('data-i')).substr(0,m.length-1);"
+        @"       seen[L]=seen[L]?seen[L]+1:1;});"
+        @"   }"
         @"   function L(d){var i=+d.getAttribute('data-i'),s='',r=i;"
         @"      do{s=window.__vimb_hint_alpha[r%window.__vimb_hint_alpha.length]+s;"
         @"          r=Math.floor(r/window.__vimb_hint_alpha.length)-1;}while(r>=0);return s;}"
         @"   var vis=labs.filter(function(d){return L(d).indexOf(m)===0;});"
         @"   labs.forEach(function(d){var on=L(d).indexOf(m)===0;d.style.display=on?'':'none';});"
-        @"   if(vis.length===1){var e=window.__vimb_hint_els[+vis[0].getAttribute('data-i')];"
-        @"       window.__vimb_hint_cleanup();"
-        @"       try{e.click();}catch(err){}}"
+        @"   if(vis.length===1){var idx=+vis[0].getAttribute('data-i');"
+        @"       window.__vimb_hint_follow(idx);}"
         @"   else if(vis.length===0){window.__vimb_hint_cleanup();}"
         @"   else{window.webkit.messageHandlers.vimb.postMessage({t:'hintpending',n:vis.length});}"
         @" };"
-        @" window.__vimb_hint_active=1;"
+        @" window.__vimb_hint_active=1;window.__vimb_hint_used=null;"
         @" window.webkit.messageHandlers.vimb.postMessage({t:'hintready',n:els.length});"
         @"})();";
-    [self evaluateJavaScript:js completionHandler:nil];
+    // modeCode: f/o=0(click), t=2, y=3, i=4
+    NSString *final = [js stringByReplacingOccurrencesOfString:@"%d"
+             withString:[NSString stringWithFormat:@"%d", (int)modeCode]];
+    [self evaluateJavaScript:final completionHandler:nil];
 }
 
 - (void)sendHintKey:(NSString *)key {
+    [self sendHintKey:key mode:nil];
+}
+
+- (void)sendHintKey:(NSString *)key mode:(NSString *)followMode {
     NSString *ks = [key stringByReplacingOccurrencesOfString:@"'" withString:@"\\'"];
     NSString *js2 = [NSString stringWithFormat:
         @"if(window.__vimb_hint_active){window.__vimb_hint_type('%@')}", ks];
     [self evaluateJavaScript:js2 completionHandler:nil];
+    (void)followMode;
 }
 
 - (void)scrollToTop { [self evaluateJavaScript:@"window.__vimb.scrollToTop()" completionHandler:nil]; }

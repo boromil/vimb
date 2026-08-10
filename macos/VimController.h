@@ -35,6 +35,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimNewTab;
 - (void)vimCloseTab;
 - (void)vimToggleHints;
+- (void)vimEnterHints:(NSString *)mode;      // mode: "f","t","o","y","i"
 - (void)vimHintKey:(NSString *)key;
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error;
 - (void)vimFocusWebView;

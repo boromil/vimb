@@ -17,10 +17,12 @@ NS_ASSUME_NONNULL_BEGIN
 @interface KeyboardWebView : WKWebView <WKNavigationDelegate, WKScriptMessageHandler, WKDownloadDelegate>
 @property(nonatomic, weak, nullable) id<KeyboardWebViewDelegate> vbDelegate;
 @property(nonatomic, readonly) BOOL canGoDeeperForward;
-- (instancetype)initWithFrame:(NSRect)frame NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithFrame:(NSRect)frame;
 // call the hint-toggle JS
 - (void)toggleHints;
+- (void)toggleHints:(nullable NSString *)followMode;   // followMode: "f","t","o","y","i"...
 - (void)sendHintKey:(NSString *)key;
+- (void)sendHintKey:(nullable NSString *)key mode:(nullable NSString *)followMode;
 - (void)findString:(NSString *)query forwardDirection:(BOOL)forward;
 - (void)executeCommand:(NSString *)line;
 - (void)scrollToTop;
