@@ -1,4 +1,6 @@
 #import "KeyboardWebView.h"
+#import "VimbConfig.h"
+#import "VimbAutocmd.h"
 
 // This view is created programmatically only (no nibs/coders), so the
 // designated-initializer consistency warnings don't apply.
@@ -161,11 +163,23 @@ static NSString *const GVimJS =
 
 #pragma mark - Navigation
 
+- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)nav {
+    NSString *uri = self.URL.absoluteString ?: @"";
+    [[VimbConfig shared].autocmd fireEvent:VAuLoadStarting uri:uri];
+}
+
+- (void)webView:(WKWebView *)webView didCommitNavigation:(WKNavigation *)nav {
+    NSString *uri = self.URL.absoluteString ?: @"";
+    [[VimbConfig shared].autocmd fireEvent:VAuLoadCommitted uri:uri];
+}
+
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)nav {
     if (_pendingMarkY != 0) {
         [self scrollToY:_pendingMarkY];
         _pendingMarkY = 0;
     }
+    NSString *uri = self.URL.absoluteString ?: @"";
+    [[VimbConfig shared].autocmd fireEvent:VAuLoadFinished uri:uri];
     id<KeyboardWebViewDelegate> d = self.vbDelegate;
     if (d && [d respondsToSelector:@selector(webView:didFinishLoadWithURL:)]) {
         [d webView:self didFinishLoadWithURL:self.URL];
@@ -216,6 +230,7 @@ static NSString *const GVimJS =
 
 - (void)adoptDownload:(WKDownload *)download {
     download.delegate = self;
+    [[VimbConfig shared].autocmd fireEvent:VAuDownloadStarted uri:self.URL.absoluteString];
 }
 
 - (void)download:(WKDownload *)download decideDestinationUsingResponse:(NSURLResponse *)response
@@ -226,10 +241,15 @@ static NSString *const GVimJS =
 }
 
 - (void)downloadDidFinish:(WKDownload *)download {
+    [[VimbConfig shared].autocmd fireEvent:VAuDownloadFinished uri:self.URL.absoluteString];
     id<KeyboardWebViewDelegate> d = self.vbDelegate;
     if (d && [d respondsToSelector:@selector(webView:didReceiveMessage:)]) {
         [d webView:self didReceiveMessage:@{@"t": @"download-done"}];
     }
+}
+
+- (void)download:(WKDownload *)download didFailWithError:(NSError *)error resumeData:(NSData *)resumeData {
+    [[VimbConfig shared].autocmd fireEvent:VAuDownloadFailed uri:self.URL.absoluteString];
 }
 
 #pragma mark - Actions

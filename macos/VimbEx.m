@@ -1,4 +1,6 @@
 #import "VimbEx.h"
+#import "VimbConfig.h"
+#import "VimbAutocmd.h"
 
 // Command descriptor mirroring ex.c's ExInfo table.
 typedef NS_ENUM(NSInteger, ExCmd) {
@@ -143,7 +145,22 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     }
     if ([type isEqualToString:@"save"]) { [a exSavePage]; return NO; }
     if ([type isEqualToString:@"register"]) { [a exRegisterList]; return NO; }
-    if ([type isEqualToString:@"autocmd"]) { [a exMessage:@"autocmd: not yet supported on native" error:YES]; return NO; }
+    if ([type isEqualToString:@"autocmd"]) {
+        VimbAutocmd *au = [VimbConfig shared].autocmd;
+        __weak typeof(self) weakSelf = self;
+        au.executor = ^(NSString *excmd) {
+            [weakSelf runCommand:excmd];
+        };
+        au.reporter = ^(NSString *msg, BOOL error) {
+            [a exMessage:msg error:error];
+        };
+        if ([full hasPrefix:@"augroup"]) {
+            [au parseAugroupLine:arg];
+        } else {
+            [au parseAutocmdLine:arg];
+        }
+        return NO;
+    }
     if ([type isEqualToString:@"map"]) { [a exMessage:@"mapping: use :nnoremap in config" error:YES]; return NO; }
     if ([type isEqualToString:@"unmap"]) { [a exMessage:@"mapping: use :nunmap in config" error:YES]; return NO; }
     if ([type isEqualToString:@"source"]) { [a exMessage:@"source: not yet supported on native" error:YES]; return NO; }

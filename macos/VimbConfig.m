@@ -26,6 +26,7 @@ static const NSString *COOKIE_ACCEPT = @"ask";
         _bookmarkStore = [[VimbStorage alloc] initWithName:@"bookmark"];
         _closedStore = [[VimbStorage alloc] initWithName:@"closed"];
         _queueStore = [[VimbStorage alloc] initWithName:@"queue"];
+        _autocmd = [[VimbAutocmd alloc] init];
         _scrollstep = 40;
         _historyMax = 2000;
         _closedMax = 10;
