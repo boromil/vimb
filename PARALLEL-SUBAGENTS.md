@@ -109,7 +109,13 @@ WKWebView ceiling.
 - **Goal:** make the external-editor flow work with async editors (the
   `open -t`/TextEdit default) by polling/watching the temp file so edits come
   back; keep blocking editors (vim/\$EDITOR) working. Add a bounded wait so it
-  degrades gracefully.
+  degrades gracefully. `[done]`
+  - Note: VimbEditor now runs a two-phase wait — blocking editors read back on
+    process exit; async editors are picked up by a bounded main-run-loop poll
+    (content-sensitive change detect). Test injects `editorTempPath`,
+    `editorPollInterval`, `editorTimeout` to fake the async write via
+    dispatch_after. Both `test_editor_round_trip` and
+    `test_editor_async_readback` green.
 - **Owns:** `macos/VimbEditor.m`, `macos/VimbEditor.h`,
   `frags/ws3-editor.mk`, `macos/tests/test_behavior.m` (your new test
   `test_editor_async_readback`).
@@ -152,7 +158,7 @@ commit order and does the serial Makefile-fragment includes.
 |----|--------------------|----------------------------------|---------------|
 | 1  | Completion dropdown| CompletionDropdown.*, frag ws1   | `[claimed]`    |
 | 2  | Context menu       | VimbContextMenu.*, frag ws2      | `[done]`       |
-| 3  | Editor read-back   | VimbEditor.*, frag ws3           | `[claimed]`    |
+| 3  | Editor read-back   | VimbEditor.*, frag ws3           | `[done]`       |
 | 4  | Bookmarks UI       | VimbBookmark*.*, frag ws4        | `[done]`       |
 | 5  | Notification perm  | — (not portable)                 | `[n/a]`       |
 | 6  | Non-public settings| — (not portable)                 | `[n/a]`       |
