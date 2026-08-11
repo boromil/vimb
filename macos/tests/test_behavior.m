@@ -14,6 +14,7 @@
 #import "VimbHandler.h"
 #import "VimbEditor.h"
 #import "VimbHintEngine.h"
+#import "VimbPermissionPolicy.h"
 
 #pragma mark - Shared spies
 
@@ -1367,6 +1368,35 @@ static void test_hint_engine_actions_and_dispatch(void) {
     TEST_ASSERT_TRUE([[VimbHintEngine commandLinePrefixForMode:'T'] isEqualToString:@":tabopen "]);
 }
 
+#pragma mark - Permission policy
+
+// geolocation option resolution: ask / always / never (parity with setting.c).
+static void test_permission_geolocation(void) {
+    // never / always short-circuit to deny / grant.
+    TEST_ASSERT_EQ_I([VimbPermissionPolicy geolocationDecisionForOption:@"never"], VimbPermissionDeny);
+    TEST_ASSERT_EQ_I([VimbPermissionPolicy geolocationDecisionForOption:@"always"], VimbPermissionGrant);
+    // default "ask" and unknown values fall through to a prompt.
+    TEST_ASSERT_EQ_I([VimbPermissionPolicy geolocationDecisionForOption:@"ask"], VimbPermissionPrompt);
+    TEST_ASSERT_EQ_I([VimbPermissionPolicy geolocationDecisionForOption:@"Ask"], VimbPermissionPrompt);
+    TEST_ASSERT_EQ_I([VimbPermissionPolicy geolocationDecisionForOption:@""], VimbPermissionPrompt);
+}
+
+// media-stream gate and capture-prompt wording (parity with on_permission_request).
+static void test_permission_media_capture(void) {
+    // media-stream off -> deny outright (requests are gated via enable-media-stream).
+    TEST_ASSERT_EQ_I([VimbPermissionPolicy mediaCaptureDecisionForEnabled:NO], VimbPermissionDeny);
+    // media-stream on -> always prompt (no ask/always/never knob for media in vimb).
+    TEST_ASSERT_EQ_I([VimbPermissionPolicy mediaCaptureDecisionForEnabled:YES], VimbPermissionPrompt);
+
+    // Prompt wording matches vimb's user-media messages.
+    TEST_ASSERT_TRUE([[VimbPermissionPolicy mediaCapturePromptForKind:VimbCaptureMicrophone]
+                          isEqualToString:@"access the microphone"]);
+    TEST_ASSERT_TRUE([[VimbPermissionPolicy mediaCapturePromptForKind:VimbCaptureCamera]
+                          isEqualToString:@"access you webcam"]);
+    TEST_ASSERT_TRUE([[VimbPermissionPolicy mediaCapturePromptForKind:VimbCaptureCameraAndMicrophone]
+                          isEqualToString:@"access the camera and microphone"]);
+}
+
 #pragma mark - main
 
 // Entry point invoked from test_main.m's main(). Returns 0 on success.
@@ -1440,6 +1470,8 @@ int run_behavior_main(void) {
     RUN_TEST(test_ex_bma_and_shortcut_errors);
     RUN_TEST(test_ex_autocmd_fire_executor);
     RUN_TEST(test_controller_ambiguous_and_register);
+    RUN_TEST(test_permission_geolocation);
+    RUN_TEST(test_permission_media_capture);
 
     return RUN_ALL_TESTS();
 }

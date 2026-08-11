@@ -14,7 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)webView:(KeyboardWebView *)view didReceiveMessage:(NSDictionary *)payload;
 @end
 
-@interface KeyboardWebView : WKWebView <WKNavigationDelegate, WKScriptMessageHandler, WKDownloadDelegate>
+@interface KeyboardWebView : WKWebView <WKNavigationDelegate, WKScriptMessageHandler, WKDownloadDelegate, WKUIDelegate>
 @property(nonatomic, weak, nullable) id<KeyboardWebViewDelegate> vbDelegate;
 @property(nonatomic, readonly) BOOL canGoDeeperForward;
 - (instancetype)initWithFrame:(NSRect)frame;

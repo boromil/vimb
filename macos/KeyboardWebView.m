@@ -1,6 +1,7 @@
 #import "KeyboardWebView.h"
 #import "VimbConfig.h"
 #import "VimbAutocmd.h"
+#import "VimbPermissionPolicy.h"
 
 // This view is created programmatically only (no nibs/coders), so the
 // designated-initializer consistency warnings don't apply.
@@ -179,7 +180,7 @@ static NSString *const GVimJS =
     self = [super initWithFrame:frame configuration:config];
     if (self) {
         self.navigationDelegate = self;
-        self.UIDelegate = nil;
+        self.UIDelegate = self;
         self.allowsBackForwardNavigationGestures = YES;
         [self addObserver:self forKeyPath:@"estimatedProgress" options:0 context:NULL];
         [self addObserver:self forKeyPath:@"title" options:0 context:NULL];
@@ -356,6 +357,75 @@ static NSString *const GVimJS =
             [d webView:self didReceiveMessage:@{@"t": @"loaderror", @"s": error.localizedDescription ?: @""}];
         }
     }
+}
+
+#pragma mark - Permissions (parity with on_permission_request in main.c)
+
+// Present a keyboard-operable Allow/Deny alert for a page permission request and
+// forward the choice as a WKPermissionDecision.
+- (void)promptPermissionMessage:(NSString *)message
+                decisionHandler:(void (^)(WKPermissionDecision))decisionHandler {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Allow this page to continue?";
+    alert.informativeText = [NSString stringWithFormat:@"Page wants to %@.", message];
+    [alert addButtonWithTitle:@"Allow"];
+    [alert addButtonWithTitle:@"Deny"];
+    alert.alertStyle = NSAlertStyleInformational;
+    NSWindow *host = self.window;
+    if (host) {
+        [alert beginSheetModalForWindow:host completionHandler:^(NSModalResponse response) {
+            decisionHandler(response == NSAlertFirstButtonReturn
+                            ? WKPermissionDecisionGrant
+                            : WKPermissionDecisionDeny);
+        }];
+    } else {
+        // No window yet: deny so the request is never left hanging.
+        decisionHandler(WKPermissionDecisionDeny);
+    }
+}
+
+// Gate: with media-stream off, the page cannot access camera/microphone at all
+// (mirrors webkit default; setting.c maps media-stream to enable-media-stream).
+- (void)webView:(WKWebView *)webView requestMediaCapturePermissionForOrigin:(WKSecurityOrigin *)origin
+ initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
+ decisionHandler:(void (^)(WKPermissionDecision))decisionHandler {
+    VimbConfig *cfg = [VimbConfig shared];
+    VimbPermissionDecision decision =
+        [VimbPermissionPolicy mediaCaptureDecisionForEnabled:[cfg getBool:@"media-stream" defaultValue:NO]];
+    if (decision == VimbPermissionDeny) {
+        decisionHandler(WKPermissionDecisionDeny);
+        return;
+    }
+    VimbCaptureKind kind;
+    switch (type) {
+        case WKMediaCaptureTypeMicrophone:   kind = VimbCaptureMicrophone; break;
+        case WKMediaCaptureTypeCamera:       kind = VimbCaptureCamera; break;
+        case WKMediaCaptureTypeCameraAndMicrophone:
+        default:                             kind = VimbCaptureCameraAndMicrophone; break;
+    }
+    [self promptPermissionMessage:[VimbPermissionPolicy mediaCapturePromptForKind:kind]
+                  decisionHandler:decisionHandler];
+}
+
+// geolocation setting: ask / always / never (parity with setting.c geolocation()).
+- (void)webView:(WKWebView *)webView requestGeolocationPermissionForOrigin:(WKSecurityOrigin *)origin
+ initiatedByFrame:(WKFrameInfo *)frame
+ decisionHandler:(void (^)(WKPermissionDecision))decisionHandler {
+    VimbConfig *cfg = [VimbConfig shared];
+    VimbPermissionDecision decision =
+        [VimbPermissionPolicy geolocationDecisionForOption:
+            [cfg getString:@"geolocation" defaultValue:@"ask"]];
+    if (decision == VimbPermissionGrant) {
+        decisionHandler(WKPermissionDecisionGrant);
+        return;
+    }
+    if (decision == VimbPermissionDeny) {
+        decisionHandler(WKPermissionDecisionDeny);
+        return;
+    }
+    // ask
+    [self promptPermissionMessage:@"access your location"
+                  decisionHandler:decisionHandler];
 }
 
 #pragma mark - Script messages (JS -> native)
