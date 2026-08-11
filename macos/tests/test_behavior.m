@@ -15,7 +15,9 @@
 #import "VimbEditor.h"
 #import "VimbHintEngine.h"
 #import "VimbPermissionPolicy.h"
+#import "VimbContextMenu.h"
 #import "VimbBookmarkStore.h"
+#import "CompletionCandidate.h"
 
 #pragma mark - Shared spies
 
@@ -705,6 +707,50 @@ static void test_editor_round_trip(void) {
     }
     TEST_ASSERT_TRUE(fired == YES);
     TEST_ASSERT_EQ_STR(result, @"edited");
+}
+
+static void test_editor_async_readback(void) {
+    // Simulate an ASYNC editor (open -t / TextEdit): the spawned command
+    // (`true`) exits immediately without writing the temp file, and the real
+    // editor's write-back happens LATER on the main run loop. The bounded poll
+    // loop must pick that late write up and return it.
+    VimbEditor *ed = [[VimbEditor alloc] init];
+
+    // Deterministic, no real-second sleeps: inject a fixed temp path and tiny
+    // poll interval so we control exactly where/when the async write lands.
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"vimb-editor-async-%@.txt", [NSUUID UUID].UUIDString]];
+    ed.editorTempPath = path;
+    ed.editorPollInterval = 0.01;
+    ed.editorTimeout = 2.0;
+
+    __block NSString *result = nil;
+    __block BOOL fired = NO;
+    BOOL ok = [ed editText:@"initial"
+            editorCommand:@"/usr/bin/true" // async: exits instantly, no write
+                completion:^(NSString *edited, NSString *p) {
+                    (void)p;
+                    result = edited;
+                    fired = YES;
+                }];
+    TEST_ASSERT_TRUE(ok == YES);
+
+    // Fake the async editor writing back: schedule the write on the main run
+    // loop shortly after spawn, mimicking TextEdit saving the temp file later.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        NSError *werr = nil;
+        [@"edited_async" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&werr];
+    });
+
+    // Pump the run loop until the async completion fires (bounded).
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3.0];
+    while (!fired && [deadline timeIntervalSinceNow] > 0) {
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+    }
+    TEST_ASSERT_TRUE(fired == YES);
+    TEST_ASSERT_EQ_STR(result, @"edited_async");
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
 }
 
 static void test_download_directory_setting(void) {
@@ -1412,6 +1458,86 @@ static void test_permission_media_capture(void) {
                           isEqualToString:@"access the camera and microphone"]);
 }
 
+#pragma mark - Context menu
+
+// Builds the right-click menu tree for a link and a plain page (parity with the
+// replacements context-menu.c applies: "open in new tab" instead of new window,
+// plus back/forward/reload and hint/view-source/bookmark actions).
+static void test_context_menu_build(void) {
+    // --- Right-click on a link, with navigable history ---
+    NSDictionary *linkCtx = @{
+        @"link": @"https://example.com/a",
+        @"back": @YES,
+        @"forward": @NO,
+    };
+    NSArray<NSDictionary *> *tree = [VimbContextMenu menuTreeForContext:linkCtx];
+    TEST_ASSERT_NOTNULL(tree);
+    TEST_ASSERT_TRUE(tree.count >= 8);
+
+    // Back enabled, Forward disabled — verified in the scan loop below.
+
+    // Every action item carries a title, an action tag and an enabled flag.
+    __block int actionCount = 0;
+    __block BOOL sawBack = NO, sawForward = NO, sawReload = NO;
+    __block BOOL sawOpenTab = NO, sawCopyLink = NO, sawHome = NO;
+    __block BOOL sawHint = NO, sawSource = NO, sawBookmark = NO;
+    [tree enumerateObjectsUsingBlock:^(NSDictionary *item, NSUInteger idx, BOOL *stop) {
+        (void)idx; (void)stop;
+        if ([item[@"type"] isEqualToString:@"separator"]) { return; }
+        actionCount++;
+        NSString *tag = item[@"action"];
+        TEST_ASSERT_NOTNULL(item[@"title"]);
+        TEST_ASSERT_NOTNULL(item[@"enabled"]);
+        if ([tag isEqualToString:@"back"]) { sawBack = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"forward"]) { sawForward = YES; TEST_ASSERT_FALSE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"reload"]) { sawReload = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"openLinkNewTab"]) { sawOpenTab = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"copyLink"]) { sawCopyLink = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"home"]) { sawHome = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"hintLinks"]) { sawHint = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"viewSource"]) { sawSource = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+        if ([tag isEqualToString:@"addBookmark"]) { sawBookmark = YES; TEST_ASSERT_TRUE([item[@"enabled"] boolValue]); }
+    }];
+    TEST_ASSERT_TRUE(sawBack);
+    TEST_ASSERT_TRUE(sawForward);
+    TEST_ASSERT_TRUE(sawReload);
+    TEST_ASSERT_TRUE(sawOpenTab);
+    TEST_ASSERT_TRUE(sawCopyLink);
+    TEST_ASSERT_TRUE(sawHome);
+    TEST_ASSERT_TRUE(sawHint);
+    TEST_ASSERT_TRUE(sawSource);
+    TEST_ASSERT_TRUE(sawBookmark);
+    TEST_ASSERT_EQ_I(actionCount, 9);
+
+    // A plain page (no link) substitutes a copy-page-URL item for the link items.
+    NSArray<NSDictionary *> *plain = [VimbContextMenu menuTreeForContext:@{@"back": @NO, @"forward": @NO}];
+    TEST_ASSERT_NOTNULL(plain);
+    __block BOOL sawCopyURL = NO, sawLinkTab = NO;
+    [plain enumerateObjectsUsingBlock:^(NSDictionary *item, NSUInteger idx, BOOL *stop) {
+        (void)idx; (void)stop;
+        if ([item[@"type"] isEqualToString:@"separator"]) { return; }
+        if ([item[@"action"] isEqualToString:@"copyPageURL"]) { sawCopyURL = YES; }
+        if ([item[@"action"] isEqualToString:@"openLinkNewTab"]) { sawLinkTab = YES; }
+    }];
+    TEST_ASSERT_TRUE(sawCopyURL);
+    TEST_ASSERT_FALSE(sawLinkTab);
+
+    // Back/forward default to disabled when unsupported / omitted context.
+    __block BOOL backEnabled = NO, fwdEnabled = NO;
+    [plain enumerateObjectsUsingBlock:^(NSDictionary *item, NSUInteger idx, BOOL *stop) {
+        (void)idx; (void)stop;
+        if ([item[@"action"] isEqualToString:@"back"]) backEnabled = [item[@"enabled"] boolValue];
+        if ([item[@"action"] isEqualToString:@"forward"]) fwdEnabled = [item[@"enabled"] boolValue];
+    }];
+    TEST_ASSERT_FALSE(backEnabled);
+    TEST_ASSERT_FALSE(fwdEnabled);
+
+    // A nil context still yields a valid menu (defensive).
+    NSArray<NSDictionary *> *nilCtx = [VimbContextMenu menuTreeForContext:nil];
+    TEST_ASSERT_NOTNULL(nilCtx);
+    TEST_ASSERT_TRUE(nilCtx.count >= 4);
+}
+
 #pragma mark - Bookmarks store
 
 // CRUD/list/lookup/filter for the bookmark store (parity with bookmark.c).
@@ -1470,6 +1596,112 @@ static void test_bookmark_store(void) {
     TEST_ASSERT_NOTNULL([reload bookmarkForURL:@"https://docs.example.com/a"]);
 }
 
+#pragma mark - Completion dropdown (Foundation matcher)
+
+// Dropdown candidate engine (WS-1): parity with src/completion.c two-column
+// items + util.c / setting.c prefix matching + ex.c sorted completion.
+static void test_completion_dropdown(void) {
+    // --- Filtering / ranking (parity with util_fill_completion + ex.c sort) ---
+    NSArray<NSString *> *urls = @[
+        @"https://example.com", @"https://docs.example.com/a", @"https://git.example.org",
+        @"https://example.com/x", @"about:blank", @"https://docs.example.com/b",
+    ];
+    // Prefix match for "docs.example" -> both docs URLS, lexicographically sorted.
+    NSArray<NSString *> *m = [CompletionMatcher rankMatchesForQuery:@"docs.example"
+                                                          inStrings:urls
+                                                               limit:0
+                                                              sorted:YES];
+    TEST_ASSERT_EQ_I((int)m.count, 2);
+    TEST_ASSERT_TRUE([m[0] isEqualToString:@"https://docs.example.com/a"]);
+    TEST_ASSERT_TRUE([m[1] isEqualToString:@"https://docs.example.com/b"]);
+
+    // Substring matches rank after exact prefixes but still match.
+    NSArray<NSString *> *sub = [CompletionMatcher rankMatchesForQuery:@"example.org"
+                                                            inStrings:urls
+                                                                 limit:0
+                                                                sorted:YES];
+    TEST_ASSERT_TRUE(sub.count >= 1);
+    TEST_ASSERT_TRUE([sub containsObject:@"https://git.example.org"]);
+
+    // Case-insensitive matching.
+    NSArray<NSString *> *ci = [CompletionMatcher rankMatchesForQuery:@"EXAMPLE"
+                                                           inStrings:@[ @"https://example.com", @"no-match" ]
+                                                                limit:0
+                                                               sorted:YES];
+    TEST_ASSERT_EQ_I((int)ci.count, 1);
+
+    // Empty query returns every string (parity: no input -> copy all).
+    NSArray<NSString *> *all = [CompletionMatcher rankMatchesForQuery:@""
+                                                            inStrings:@[ @"a", @"b", @"c" ]
+                                                                 limit:0
+                                                                sorted:YES];
+    TEST_ASSERT_EQ_I((int)all.count, 3);
+
+    // Dedup: duplicate strings appear once.
+    NSArray<NSString *> *dedup = [CompletionMatcher rankMatchesForQuery:@"x"
+                                                              inStrings:@[ @"x1", @"x1", @"x2" ]
+                                                                   limit:0
+                                                                  sorted:NO];
+    TEST_ASSERT_EQ_I((int)dedup.count, 2);
+
+    // Cap honors the limit.
+    NSArray<NSString *> *capped = [CompletionMatcher rankMatchesForQuery:@"p"
+                                                               inStrings:@[ @"p1", @"p2", @"p3", @"p4" ]
+                                                                    limit:2
+                                                                   sorted:YES];
+    TEST_ASSERT_EQ_I((int)capped.count, 2);
+
+    // Non-sorted (preserve source order across matches) for URL/history order.
+    NSArray<NSString *> *unsorted = [CompletionMatcher rankMatchesForQuery:@"d"
+                                                                 inStrings:@[ @"d2", @"d1", @"d3" ]
+                                                                      limit:0
+                                                                     sorted:NO];
+    TEST_ASSERT_EQ_I((int)unsorted.count, 3);
+    TEST_ASSERT_TRUE([unsorted[0] isEqualToString:@"d2"]);
+    TEST_ASSERT_TRUE([unsorted[1] isEqualToString:@"d1"]);
+    TEST_ASSERT_TRUE([unsorted[2] isEqualToString:@"d3"]);
+
+    // --- Candidate two-column model (parity with CompletionItem first/second) ---
+    NSArray<CompletionCandidate *> *cands = [CompletionMatcher candidatesForQuery:@"example"
+                                                                        inStrings:@[ @"https://example.com", @"https://other.org" ]
+                                                                             limit:0
+                                                                            sorted:YES];
+    TEST_ASSERT_EQ_I((int)cands.count, 1);
+    TEST_ASSERT_TRUE([cands[0].value isEqualToString:@"https://example.com"]);
+    TEST_ASSERT(cands[0].detail == nil);
+
+    NSArray<CompletionCandidate *> *entryCands = [CompletionMatcher
+        candidatesForQuery:@"exa"
+                   entries:@[
+                       @{ @"value": @"https://example.com", @"detail": @"Example site" },
+                       @{ @"value": @"https://other.org", @"detail": @"Other" },
+                   ] limit:0];
+    TEST_ASSERT_EQ_I((int)entryCands.count, 1);
+    TEST_ASSERT_TRUE([entryCands[0].value isEqualToString:@"https://example.com"]);
+    TEST_ASSERT_TRUE([entryCands[0].detail isEqualToString:@"Example site"]);
+
+    // --- completion-* CSS parsing (config.def.h SETTING_COMPLETION_CSS parity) ---
+    CompletionStyle *style = [CompletionMatcher styleFromCSS:
+        @"color:#fff;background-color:#656565;"];
+    TEST_ASSERT_TRUE(style.hasForeground);
+    TEST_ASSERT_TRUE(style.hasBackground);
+    TEST_ASSERT_TRUE([CompletionMatcher styleFromCSS:@""] != nil);
+    TEST_ASSERT_FALSE([CompletionMatcher styleFromCSS:@""].hasBackground);
+
+    // Named rgb() and alpha.
+    CompletionStyle *named = [CompletionMatcher styleFromCSS:
+        @"background-color:rgb(255, 0, 0);"];
+    TEST_ASSERT_TRUE(named.hasBackground);
+    // 255 -> 1.0 (tolerant compare).
+    TEST_ASSERT_TRUE(fabs(named.bgRed - 1.0) < 0.001);
+    TEST_ASSERT_TRUE(fabs(named.bgGreen) < 0.001);
+
+    // #rrggbb.
+    CompletionStyle *hex = [CompletionMatcher styleFromCSS:@"color:#abc;"];
+    TEST_ASSERT_TRUE(hex.hasForeground);
+    TEST_ASSERT_TRUE(fabs(hex.fgRed - (170.0 / 255.0)) < 0.001); // 0xab
+}
+
 #pragma mark - main
 
 // Entry point invoked from test_main.m's main(). Returns 0 on success.
@@ -1507,6 +1739,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
     RUN_TEST(test_editor_round_trip);
+    RUN_TEST(test_editor_async_readback);
 
     RUN_TEST(test_ex_every_type);
     RUN_TEST(test_ex_tabcmd);
@@ -1545,7 +1778,9 @@ int run_behavior_main(void) {
     RUN_TEST(test_controller_ambiguous_and_register);
     RUN_TEST(test_permission_geolocation);
     RUN_TEST(test_permission_media_capture);
+    RUN_TEST(test_context_menu_build);
     RUN_TEST(test_bookmark_store);
+    RUN_TEST(test_completion_dropdown);
 
     return RUN_ALL_TESTS();
 }
