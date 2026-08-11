@@ -477,6 +477,46 @@ static void test_ex_parser_abbreviation(void) {
     TEST_ASSERT_TRUE(names >= 40);
 }
 
+// VimbEx.runCommand: returns a VimbExCmdResult bitmask (CMD_SUCCESS|KEEPINPUT,
+// parity with main.h). Distinct result channels for distinct command families.
+static void test_ex_cmd_result(void) {
+    VimbEx *ex = [[VimbEx alloc] init];
+    SpyExActor *a = [[SpyExActor alloc] init];
+    ex.actor = a;
+
+    // Success (no keep): open / eval / normal / quit clear the input box.
+    TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"open https://x.com"],
+                     (NSInteger)VimbExCmdResultSuccess);
+    TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"eval 1+1"],
+                     (NSInteger)VimbExCmdResultSuccess);
+    TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"quit"],
+                     (NSInteger)VimbExCmdResultSuccess);
+
+    // Keep-input success: :bma keeps the line (ex.c CMD_SUCCESS|KEEPINPUT).
+    VimbExCmdResult bma = [ex runCommand:@"bma work"];
+    TEST_ASSERT_TRUE(bma & VimbExCmdResultSuccess);
+    TEST_ASSERT_TRUE(bma & VimbExCmdResultKeepInput);
+
+    // Keep-input success: :set keeps the line editable (setting.c).
+    VimbExCmdResult set = [ex runCommand:@"set scroll-step=100"];
+    TEST_ASSERT_TRUE(set & VimbExCmdResultSuccess);
+    TEST_ASSERT_TRUE(set & VimbExCmdResultKeepInput);
+
+    // Error + keep-input: unknown command keeps the typo for correction.
+    VimbExCmdResult unknown = [ex runCommand:@"notacommand"];
+    TEST_ASSERT_TRUE((unknown & VimbExCmdResultSuccess) == 0);
+    TEST_ASSERT_TRUE(unknown & VimbExCmdResultKeepInput);
+
+    // Error + keep-input: malformed handler stays editable.
+    VimbExCmdResult h = [ex runCommand:@"handler-add"]; // no scheme=command
+    TEST_ASSERT_TRUE((h & VimbExCmdResultSuccess) == 0);
+    TEST_ASSERT_TRUE(h & VimbExCmdResultKeepInput);
+
+    // Constants mirror main.h CMD_SUCCESS=0x01, CMD_KEEPINPUT=0x02.
+    TEST_ASSERT_EQ_I((NSInteger)VimbExCmdResultSuccess, 1);
+    TEST_ASSERT_EQ_I((NSInteger)VimbExCmdResultKeepInput, 2);
+}
+
 static void test_ex_shortcut_and_bang(void) {
     VimbEx *ex = [[VimbEx alloc] init];
     SpyExActor *a = [[SpyExActor alloc] init];
@@ -781,6 +821,7 @@ int main(void) {
     RUN_TEST(test_ex_shortcut_and_bang);
     RUN_TEST(test_ex_parser_arg);
     RUN_TEST(test_ex_parser_abbreviation);
+    RUN_TEST(test_ex_cmd_result);
     RUN_TEST(test_path_unique_destination);
     RUN_TEST(test_engine_registers_marks);
     RUN_TEST(test_engine_vsetting);

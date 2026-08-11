@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import "VimController.h"
+#import "VimbEx.h"
 
 @class KeyboardWebView;
 
@@ -23,7 +24,7 @@ typedef void (^WindowReleasedHandler)(NSWindowController *wc);
 - (void)goBack;
 - (void)goForward;
 - (void)reloadPage;
-- (void)commandLineExecuted:(NSString *)line;
+- (VimbExCmdResult)commandLineExecuted:(NSString *)line;
 - (void)showMessage:(NSString *)message error:(BOOL)error;
 @end
 

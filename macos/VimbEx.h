@@ -2,9 +2,19 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// Result/lifecycle bitmask returned by VimbEx.runCommand: and reported through
+// the optional actor result channel. Mirrors src/main.h's VbCmdResult:
+// CMD_ERROR=0, CMD_SUCCESS=0x01, CMD_KEEPINPUT=0x02 ("don't clear the inputbox").
+typedef NS_OPTIONS(NSUInteger, VimbExCmdResult) {
+    VimbExCmdResultError     = 0,
+    VimbExCmdResultSuccess   = 1 << 0, // command executed successfully
+    VimbExCmdResultKeepInput = 1 << 1, // don't clear the command input box
+};
+
 // Executes vimb ex commands (":"-prefixed command lines). Faithful port of
-// ex.c's command table + dispatch. Returns a *success* flag that the caller
-// uses to decide whether to keep the command-line input (CMD_KEEPINPUT).
+// ex.c's command table + dispatch. Returns the command result bitmask
+// (CMD_SUCCESS | CMD_KEEPINPUT), which the caller uses to decide whether to
+// keep the input box text.
 @protocol VimbExActor <NSObject>
 - (void)exOpen:(NSString *)arg newTab:(BOOL)newTab;
 - (void)exSet:(NSString *)fullArg;
@@ -38,12 +48,17 @@ NS_ASSUME_NONNULL_BEGIN
 // controller; treated as a no-op by actors that don't support it.
 @optional
 - (void)exShowBookmarks;
+// Uniform async result/lifecycle channel. Commands whose success/failure is
+// only known after an async operation (e.g. eval, handler add/remove) report
+// through this instead of ad-hoc exMessage:/completion blocks. Optional so
+// existing actor implementations are unaffected.
+- (void)exReportResult:(VimbExCmdResult)result message:(nullable NSString *)message;
 @end
 
 @interface VimbEx : NSObject
 @property(nonatomic, weak, nullable) id<VimbExActor> actor;
-// Returns YES if user input should be retained (i.e. CMD_KEEPINPUT).
-- (BOOL)runCommand:(NSString *)command;
+// Executes a command line; returns the result bitmask (VimbExCmdResult).
+- (VimbExCmdResult)runCommand:(NSString *)command;
 - (NSString *)expandToken:(NSString *)token;    // % / # expansion
 - (NSArray<NSString *> *)commandNames;
 // Resolve a possibly-abbreviated command name (parse_command_name semantics).

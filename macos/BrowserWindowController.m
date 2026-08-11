@@ -347,34 +347,33 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)goForward { [self.activeTab.webView goForward]; }
 - (void)reloadPage { [self.activeTab.webView reload]; }
 
-- (void)commandLineExecuted:(NSString *)line {
+- (VimbExCmdResult)commandLineExecuted:(NSString *)line {
     // The command line text may include its leading prompt char.
-    if (line.length == 0) { return; }
+    if (line.length == 0) { return VimbExCmdResultError; }
     unichar p = [line characterAtIndex:0];
     NSString *rest = [line substringFromIndex:1];
     switch (p) {
         case ':':
             [[VimbConfig shared].commandStore prepend:rest max:1000];
-            [self.exEngine runCommand:rest];
-            break;
+            return [self.exEngine runCommand:rest];
         case '/':
             [self.activeTab.webView findString:rest forwardDirection:YES];
             [[VimbConfig shared].searchStore prepend:rest max:100];
-            break;
+            return VimbExCmdResultSuccess;
         case '?':
             [self.activeTab.webView findString:rest forwardDirection:NO];
             [[VimbConfig shared].searchStore prepend:rest max:100];
-            break;
+            return VimbExCmdResultSuccess;
         default:
             // open/find without a prompt char (e.g. from o/O).
             if ([line hasPrefix:@"open "]) {
-                [self.exEngine runCommand:line];
+                return [self.exEngine runCommand:line];
             } else if (p == ';' || p == 'g') {
                 [self.activeTab.webView toggleHints];
+                return VimbExCmdResultSuccess;
             } else {
-                [self.exEngine runCommand:line];
+                return [self.exEngine runCommand:line];
             }
-            break;
     }
 }
 
@@ -753,6 +752,15 @@ static const CGFloat kStatusHeight = 24.0;
     [self showMessage:[NSString stringWithFormat:@"queued %@", url] error:NO];
 }
 - (void)exShowMessages { [self showMessage:@"no messages" error:NO]; }
+
+// Uniform async result channel (VimbExActor @optional). Async commands (eval,
+// handler add/remove) report success/error here; KEEPINPUT is intentionally
+// ignored for post-Enter async reports (the input box is already dismissed).
+- (void)exReportResult:(VimbExCmdResult)result message:(nullable NSString *)message {
+    if (!message.length) { return; }
+    BOOL error = (result & VimbExCmdResultSuccess) == 0;
+    [self showMessage:message error:error];
+}
 
 - (void)exBookmarkAdd:(NSString *)url title:(NSString *)title {
     NSString *line = url;
@@ -1653,11 +1661,18 @@ static const CGFloat kStatusHeight = 24.0;
             NSString *line = self.commandField.stringValue;
             VimMode m = self.vim.mode;
             [self.completionDropdown dismiss];
-            [self.commandField.animator setAlphaValue:0.0];
-            if (m == VimModeCommand) { [self commandLineExecuted:line]; }
+            VimbExCmdResult res = VimbExCmdResultError;
+            if (m == VimModeCommand) { res = [self commandLineExecuted:line]; }
             else if (m == VimModeSearch) { [self.vim commandLineCommitted:line]; }
             [self.vim reset];
-            [self.window makeFirstResponder:self.activeTab.view];
+            if ((res & VimbExCmdResultKeepInput) && m == VimModeCommand) {
+                // GTK CMD_KEEPINPUT: keep the typed command in the input box
+                // (still focused) so it can be corrected/continued.
+                [self.window makeFirstResponder:self.commandField];
+            } else {
+                [self.commandField.animator setAlphaValue:0.0];
+                [self.window makeFirstResponder:self.activeTab.view];
+            }
             return YES;
         }
         if (commandSelector == @selector(cancelOperation:)) {
@@ -1914,11 +1929,17 @@ static const CGFloat kStatusHeight = 24.0;
     NSString *completed = [NSString stringWithFormat:@"%@%@", head, choice];
     self.commandField.stringValue = completed;
     VimMode m = self.vim.mode;
-    [self.commandField.animator setAlphaValue:0.0];
-    if (m == VimModeCommand) { [self commandLineExecuted:completed]; }
+    [self.completionDropdown dismiss];
+    VimbExCmdResult res = VimbExCmdResultError;
+    if (m == VimModeCommand) { res = [self commandLineExecuted:completed]; }
     else if (m == VimModeSearch) { [self.vim commandLineCommitted:completed]; }
     [self.vim reset];
-    [self.window makeFirstResponder:self.activeTab.view];
+    if ((res & VimbExCmdResultKeepInput) && m == VimModeCommand) {
+        [self.window makeFirstResponder:self.commandField];
+    } else {
+        [self.commandField.animator setAlphaValue:0.0];
+        [self.window makeFirstResponder:self.activeTab.view];
+    }
 }
 
 #pragma mark - Menu / responder actions

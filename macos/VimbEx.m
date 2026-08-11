@@ -56,12 +56,12 @@ static NSString *TypeForName(NSString *name) {
     return token; // %/# expansion handled by caller with page context
 }
 
-- (BOOL)runCommand:(NSString *)raw {
+- (VimbExCmdResult)runCommand:(NSString *)raw {
     id<VimbExActor> a = self.actor;
-    if (!a) { return NO; }
+    if (!a) { return VimbExCmdResultError; }
 
     NSString *cmdLine = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    if (cmdLine.length == 0) { return NO; }
+    if (cmdLine.length == 0) { return VimbExCmdResultError; }
 
     // Parse the line with the shared ex.c-faithful parser (name resolution,
     // bang, count, lhs/rhs). The raw remainder is kept for dispatch branches
@@ -76,7 +76,7 @@ static NSString *TypeForName(NSString *name) {
             if ([a respondsToSelector:@selector(exShowBookmarks)]) {
                 [a exShowBookmarks];
             }
-            return NO;
+            return VimbExCmdResultSuccess;
         }
         // Not a recognized ex command: treat the whole line as a URL/query to
         // open (vim b) — this makes ":open foo", bare ":" URLs and prefilled
@@ -86,11 +86,13 @@ static NSString *TypeForName(NSString *name) {
             && ![cmdLine containsString:@"."]) {
             // Still ambiguous-ly not a URL (a single bare token with no dot or
             // slash); could be a typo'd command.
+            // GTK ex_run_string returns CMD_ERROR|KEEPINPUT for an unknown
+            // command: keep the typed line in the input box so it can be fixed.
             [a exMessage:[NSString stringWithFormat:@"Invalid command: %@", firstToken] error:YES];
-            return NO;
+            return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
         [a exOpen:cmdLine newTab:NO];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
 
     BOOL bang = parsed.bang;
@@ -101,47 +103,49 @@ static NSString *TypeForName(NSString *name) {
     if ([type isEqualToString:@"open"]) {
         BOOL newTab = [full isEqualToString:@"tabopen"];
         [a exOpen:arg newTab:newTab];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"set"]) {
         [a exSet:arg];
-        return NO;
+        // setting.c honors CMD_KEEPINPUT so a partially-typed setting stays
+        // editable in the input box for correction/completion.
+        return VimbExCmdResultSuccess | VimbExCmdResultKeepInput;
     }
     if ([type isEqualToString:@"quit"]) {
         [a exQuit:bang];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"quitall"]) {
         [a exQuitAll:bang];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"tabcmd"]) {
         [self handleTabcmd:full arg:arg actor:a];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"normal"]) {
         // GTK ex_normal: enter normal mode, then feed RHS as normal keys;
         // bang (":normal!") skips mapping (map_handle_string with noremap).
         [a exNormal:arg applyMapping:!bang];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"eval"]) {
         [a exEval:[self evalArg:full arg:arg] suppressOutput:bang];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"cleardata"]) {
         // GTK: types separated by comma (lhs); '-' or empty = all. Pass the
         // raw types string through to the actor.
         [a exClearData:arg];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"hardcopy"]) {
         [a exPrint];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"handler"]) { return [self handleHandlerCommand:full arg:arg actor:a]; }
-    if ([type isEqualToString:@"save"]) { [a exSavePage:arg.length ? arg : nil]; return NO; }
-    if ([type isEqualToString:@"register"]) { [a exRegisterList]; return NO; }
+    if ([type isEqualToString:@"save"]) { [a exSavePage:arg.length ? arg : nil]; return VimbExCmdResultSuccess; }
+    if ([type isEqualToString:@"register"]) { [a exRegisterList]; return VimbExCmdResultSuccess; }
     if ([type isEqualToString:@"autocmd"]) {
         VimbAutocmd *au = [VimbConfig shared].autocmd;
         __weak typeof(self) weakSelf = self;
@@ -156,36 +160,36 @@ static NSString *TypeForName(NSString *name) {
         } else {
             [au parseAutocmdLine:arg];
         }
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"map"]) { return [self handleMapCommand:full arg:arg]; }
     if ([type isEqualToString:@"unmap"]) { return [self handleUnmapCommand:full arg:arg]; }
     if ([type isEqualToString:@"source"]) {
         [a exSource:arg];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"shortcut"]) { return [self handleShortcutCommand:full arg:arg actor:a]; }
-    if ([type isEqualToString:@"queue"]) { [a exQueue:full arg:arg]; return NO; }
+    if ([type isEqualToString:@"queue"]) { [a exQueue:full arg:arg]; return VimbExCmdResultSuccess; }
     if ([type isEqualToString:@"bookmark"]) {
         // GTK ex_bookmark: :bma [tags] bookmarks the CURRENT page (RHS is only
         // tags); :bmr [match] removes by exact match, or the current page when
-        // no arg is given.
+        // no arg is given. On success ex.c returns CMD_SUCCESS|CMD_KEEPINPUT.
         if ([full isEqualToString:@"bma"]) {
             [a exBookmarkCurrent:arg.length ? arg : nil];
         } else { // bmr
             [a exUnbookmark:arg.length ? arg : nil];
         }
-        return NO;
+        return VimbExCmdResultSuccess | VimbExCmdResultKeepInput;
     }
-    if ([type isEqualToString:@"shell"]) { [a exShell:arg async:bang]; return NO; }
+    if ([type isEqualToString:@"shell"]) { [a exShell:arg async:bang]; return VimbExCmdResultSuccess; }
     if ([type isEqualToString:@"bookmarks"]) {
         if ([a respondsToSelector:@selector(exShowBookmarks)]) {
             [a exShowBookmarks];
         }
-        return NO;
+        return VimbExCmdResultSuccess;
     }
-    if ([type isEqualToString:@"message"]) { [a exMessage:@"" error:NO]; return NO; }
-    return NO;
+    if ([type isEqualToString:@"message"]) { [a exMessage:@"" error:NO]; return VimbExCmdResultSuccess; }
+    return VimbExCmdResultError;
 }
 
 - (NSArray<NSString *> *)tokenize:(NSString *)cmdLine {
@@ -243,12 +247,12 @@ static NSString *TypeForName(NSString *name) {
 }
 
 // :handler-add <scheme>=<command> / :handler-remove <scheme> (GTK ex_handlers).
-- (BOOL)handleHandlerCommand:(NSString *)full arg:(NSString *)arg actor:(id<VimbExActor>)a {
+- (VimbExCmdResult)handleHandlerCommand:(NSString *)full arg:(NSString *)arg actor:(id<VimbExActor>)a {
     if ([full isEqualToString:@"handler-add"]) {
         NSRange eq = [arg rangeOfString:@"="];
         if (eq.location == NSNotFound || eq.location == 0) {
             [a exMessage:@"handler-add requires scheme=command" error:YES];
-            return NO;
+            return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
         NSString *scheme = [arg substringToIndex:eq.location];
         NSString *command = [arg substringFromIndex:(eq.location + 1)];
@@ -256,7 +260,7 @@ static NSString *TypeForName(NSString *name) {
         command = [command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (scheme.length == 0 || command.length == 0) {
             [a exMessage:@"handler-add requires scheme=command" error:YES];
-            return NO;
+            return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
         __weak typeof(a) weakA = a;
         [a exHandlerAdd:scheme command:command success:^(BOOL ok) {
@@ -264,12 +268,12 @@ static NSString *TypeForName(NSString *name) {
                 [weakA exMessage:@"failed to add handler" error:YES];
             }
         }];
-        return NO;
+        return VimbExCmdResultSuccess;
     }
     NSString *scheme = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (scheme.length == 0) {
         [a exMessage:@"handler-remove requires a scheme" error:YES];
-        return NO;
+        return VimbExCmdResultError | VimbExCmdResultKeepInput;
     }
     __weak typeof(a) weakA = a;
     [a exHandlerRemove:scheme success:^(BOOL ok) {
@@ -277,7 +281,7 @@ static NSString *TypeForName(NSString *name) {
             [weakA exMessage:@"handler not found" error:YES];
         }
     }];
-    return NO;
+    return VimbExCmdResultSuccess;
 }
 
 // Maps the ex command name to its mapping mode char.
@@ -292,28 +296,28 @@ static NSString *TypeForName(NSString *name) {
     return [name containsString:@"noremap"];
 }
 
-- (BOOL)handleUnmapCommand:(NSString *)full arg:(NSString *)arg {
+- (VimbExCmdResult)handleUnmapCommand:(NSString *)full arg:(NSString *)arg {
     NSString *mode = [self mapModeForCommand:full];
     NSString *lhs = [[VimbConfig shared] convertKeyString:
         [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]];
     if (lhs.length == 0) {
         [self.actor exMessage:@"unmap requires a key" error:YES];
-        return NO;
+        return VimbExCmdResultError | VimbExCmdResultKeepInput;
     }
     BOOL removed = [[VimbConfig shared] removeMappingForMode:mode lhs:lhs];
     if (!removed) {
         // Not an error in vim; keep the command line quiet as vimb does.
     }
-    return NO;
+    return VimbExCmdResultSuccess;
 }
 
 // :shortcut-add <name> <url> / :shortcut-default <name> / :shortcut-remove <name>
-- (BOOL)handleShortcutCommand:(NSString *)full arg:(NSString *)arg actor:(id<VimbExActor>)a {
+- (VimbExCmdResult)handleShortcutCommand:(NSString *)full arg:(NSString *)arg actor:(id<VimbExActor>)a {
     if ([full isEqualToString:@"shortcut-add"]) {
         NSArray<NSString *> *p = [self tokenize:arg];
         if (p.count < 1) {
             [a exMessage:@"shortcut-add requires a name and a url" error:YES];
-            return NO;
+            return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
         NSString *key = p[0];
         // The url is the remainder of the line (may contain spaces). Accept
@@ -324,7 +328,7 @@ static NSString *TypeForName(NSString *name) {
         NSString *url = [rest stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (key.length == 0 || url.length == 0) {
             [a exMessage:@"shortcut-add requires a name and a url" error:YES];
-            return NO;
+            return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
         [VimbConfig shared].shortcuts[key] = url;
         [a exMessage:[NSString stringWithFormat:@"shortcut %@ = %@", key, url] error:NO];
@@ -334,7 +338,7 @@ static NSString *TypeForName(NSString *name) {
             [a exMessage:[full containsString:@"remove"]
                 ? @"shortcut-remove requires a name"
                 : @"shortcut-default requires a name" error:YES];
-            return NO;
+            return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
         if ([full isEqualToString:@"shortcut-default"]) {
             [VimbConfig shared].defaultShortcut = key;
@@ -348,17 +352,17 @@ static NSString *TypeForName(NSString *name) {
             [a exMessage:removed ? @"shortcut removed" : @"shortcut not found" error:!removed];
         }
     }
-    return NO;
+    return VimbExCmdResultSuccess;
 }
 
-- (BOOL)handleMapCommand:(NSString *)full arg:(NSString *)arg {
+- (VimbExCmdResult)handleMapCommand:(NSString *)full arg:(NSString *)arg {
     NSString *mode = [self mapModeForCommand:full];
     BOOL noremap = [self isNoremapCommand:full];
 
     NSArray<NSString *> *parts = [self tokenize:arg];
     if (parts.count < 2) {
         [self.actor exMessage:@"map requires a lhs and a rhs" error:YES];
-        return NO;
+        return VimbExCmdResultError | VimbExCmdResultKeepInput;
     }
     NSString *lhs = [[VimbConfig shared] convertKeyString:parts[0]];
     // rhs keeps its original spacing (may contain spaces / ex command).
@@ -368,10 +372,10 @@ static NSString *TypeForName(NSString *name) {
 
     if (lhs.length == 0 || rhs.length == 0) {
         [self.actor exMessage:@"map requires a non-empty lhs and rhs" error:YES];
-        return NO;
+        return VimbExCmdResultError | VimbExCmdResultKeepInput;
     }
     [[VimbConfig shared] addMappingForMode:mode lhs:lhs rhs:rhs noremap:noremap];
-    return NO;
+    return VimbExCmdResultSuccess;
 }
 
 @end
