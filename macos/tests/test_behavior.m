@@ -16,6 +16,8 @@
 #import "VimbHintEngine.h"
 #import "VimbPermissionPolicy.h"
 #import "VimbBookmarkStore.h"
+#import "CompletionCandidate.h"
+#import "VimbContextMenu.h"
 
 #pragma mark - Shared spies
 
@@ -1456,6 +1458,112 @@ static void test_permission_media_capture(void) {
                           isEqualToString:@"access the camera and microphone"]);
 }
 
+#pragma mark - Completion dropdown (WS-1, parity src/completion.c)
+
+// Foundation-only completion matcher + style parser (CompletionCandidate.m).
+static void test_completion_dropdown(void) {
+    // rankMatches: prefix matches rank above substring matches; dedup + cap.
+    NSArray<NSString *> *inp = @[@"apple", @"application", @"grape", @"append", @"zap"];
+    NSArray<NSString *> *ranked = [CompletionMatcher rankMatchesForQuery:@"app"
+                                                               inStrings:inp limit:10 sorted:NO];
+    TEST_ASSERT_EQ_I((NSInteger)ranked.count, (NSInteger)3); // apple, application, append
+    TEST_ASSERT_TRUE([[ranked objectAtIndex:0] hasPrefix:@"app"]);
+    // "zap"/"grape" contain "ap" but are substring matches -> after the prefix group.
+    NSArray<NSString *> *sub = [CompletionMatcher rankMatchesForQuery:@"ap"
+                                                            inStrings:inp limit:10 sorted:NO];
+    TEST_ASSERT_TRUE(sub.count >= 5);
+
+    // candidatesForQuery:inStrings: builds two-column candidates (detail nil).
+    NSArray<CompletionCandidate *> *cands = [CompletionMatcher candidatesForQuery:@"grape"
+                                                                        inStrings:inp limit:10 sorted:NO];
+    TEST_ASSERT_EQ_I((NSInteger)cands.count, (NSInteger)1);
+    TEST_ASSERT_TRUE([[cands.firstObject value] isEqualToString:@"grape"]);
+    TEST_ASSERT_TRUE([cands.firstObject detail] == nil);
+
+    // candidatesForQuery:entries: with value/detail pairs, capped by limit.
+    // Matched set is sorted lexicographically (ex.c sort=TRUE), so the first
+    // is "http://ex.com" (detail "Ex") since "ex.com" < "example.com".
+    NSArray<NSDictionary *> *entries = @[
+        @{@"value": @"http://example.com", @"detail": @"Example"},
+        @{@"value": @"http://ex.com",       @"detail": @"Ex"},
+    ];
+    NSArray<CompletionCandidate *> *ecands = [CompletionMatcher candidatesForQuery:@"ex"
+                                                                           entries:entries limit:5];
+    TEST_ASSERT_EQ_I((NSInteger)ecands.count, (NSInteger)2);
+    TEST_ASSERT_TRUE([[ecands.firstObject detail] isEqualToString:@"Ex"]);
+    TEST_ASSERT_TRUE([[ecands.lastObject value] isEqualToString:@"http://example.com"]);
+
+    // cap by limit.
+    NSArray<CompletionCandidate *> *capped = [CompletionMatcher candidatesForQuery:@""
+                                                                          entries:entries limit:1];
+    TEST_ASSERT_EQ_I((NSInteger)capped.count, (NSInteger)1);
+
+    // styleFromCSS: hex + rgb normalization (CompletionStyle exposes components).
+    CompletionStyle *hex = [CompletionMatcher styleFromCSS:@"background:#ff0000; color:#00ff00;"];
+    TEST_ASSERT_TRUE(hex.hasBackground && hex.hasForeground);
+    TEST_ASSERT([@(hex.bgRed) isEqual:@(1.0)]);
+    TEST_ASSERT([@(hex.fgGreen) isEqual:@(1.0)]);
+    CompletionStyle *empty = [CompletionMatcher styleFromCSS:@"border:1px solid black;"];
+    TEST_ASSERT_FALSE(empty.hasBackground && empty.hasForeground);
+}
+
+#pragma mark - Context menu (WS-2, parity src/context-menu.c)
+
+// Context-menu tree builder (VimbContextMenu.m) for a right-clicked element.
+static void test_context_menu_build(void) {
+    // With a link: new-tab + copy-link actions present; no copy-page-url.
+    NSDictionary *withLink = @{
+        @"link": @"https://example.com/a",
+        @"back": @YES, @"forward": @NO,
+    };
+    NSArray<NSDictionary *> *tree = [VimbContextMenu menuTreeForContext:withLink];
+    NSMutableArray<NSString *> *actions = [NSMutableArray array];
+    NSMutableArray<NSString *> *enabledActions = [NSMutableArray array];
+    BOOL sawSep = NO;
+    for (NSDictionary *item in tree) {
+        if ([item[@"type"] isEqualToString:@"action"]) {
+            [actions addObject:item[@"action"]];
+            if ([item[@"enabled"] boolValue]) { [enabledActions addObject:item[@"action"]]; }
+        } else if ([item[@"type"] isEqualToString:@"separator"]) {
+            sawSep = YES;
+        }
+    }
+    TEST_ASSERT_TRUE([actions containsObject:@"openLinkNewTab"]);
+    TEST_ASSERT_TRUE([actions containsObject:@"copyLink"]);
+    TEST_ASSERT_TRUE([actions containsObject:@"reload"]);
+    TEST_ASSERT_FALSE([actions containsObject:@"copyPageURL"]); // we have a link
+    TEST_ASSERT_TRUE(sawSep);
+    // back is present+enabled, forward is present but disabled (forward:NO).
+    TEST_ASSERT_TRUE([actions containsObject:@"back"]);
+    TEST_ASSERT_TRUE([actions containsObject:@"forward"]);
+    TEST_ASSERT_TRUE([enabledActions containsObject:@"back"]);
+    TEST_ASSERT_FALSE([enabledActions containsObject:@"forward"]);
+    TEST_ASSERT_TRUE([enabledActions containsObject:@"openLinkNewTab"]);
+
+    // Without a link: copy-page-url present, no open/copy-link.
+    NSDictionary *noLink = @{@"back": @NO, @"forward": @NO};
+    NSArray<NSString *> *na = [NSMutableArray array];
+    for (NSDictionary *item in [VimbContextMenu menuTreeForContext:noLink]) {
+        if ([item[@"type"] isEqualToString:@"action"]) {
+            [(NSMutableArray *)na addObject:item[@"action"]];
+        }
+    }
+    TEST_ASSERT_TRUE([na containsObject:@"copyPageURL"]);
+    TEST_ASSERT_FALSE([na containsObject:@"copyLink"]);
+
+    // hasLink convenience.
+    TEST_ASSERT_TRUE([VimbContextMenu hasLink:withLink]);
+    TEST_ASSERT_FALSE([VimbContextMenu hasLink:noLink]);
+    TEST_ASSERT_FALSE([VimbContextMenu hasLink:nil]);
+
+    // isOpenInNewWindowIdentifier: recognizes the WK "open in new window" items.
+    TEST_ASSERT_TRUE([VimbContextMenu isOpenInNewWindowIdentifier:@"WKMenuItemIdentifierOpenLinkInNewWindow"]);
+    TEST_ASSERT_TRUE([VimbContextMenu isOpenInNewWindowIdentifier:@"WKMenuItemIdentifierOpenImageInNewWindow"]);
+    TEST_ASSERT_TRUE([VimbContextMenu isOpenInNewWindowIdentifier:@"WKMenuItemIdentifierOpenFrameInNewWindow"]);
+    TEST_ASSERT_FALSE([VimbContextMenu isOpenInNewWindowIdentifier:@"reload"]);
+    TEST_ASSERT_FALSE([VimbContextMenu isOpenInNewWindowIdentifier:@""]);
+}
+
 #pragma mark - Bookmarks store
 
 // CRUD/list/lookup/filter for the bookmark store (parity with bookmark.c).
@@ -1561,6 +1669,8 @@ int run_behavior_main(void) {
     RUN_TEST(test_ex_unknown_command);
     RUN_TEST(test_ex_ambiguous_command);
     RUN_TEST(test_ex_abbreviation_resolution);
+    RUN_TEST(test_ex_bma_and_shortcut_errors);
+    RUN_TEST(test_ex_autocmd_fire_executor);
 
     RUN_TEST(test_controller_invoke_handlers);
     RUN_TEST(test_controller_pass_keys_to_page);
@@ -1572,8 +1682,6 @@ int run_behavior_main(void) {
     RUN_TEST(test_controller_gcmd);
     RUN_TEST(test_controller_prevnext_and_scroll_keys);
     RUN_TEST(test_controller_hint_mode_keys);
-    RUN_TEST(test_hint_engine_parse_prompt);
-    RUN_TEST(test_hint_engine_actions_and_dispatch);
     RUN_TEST(test_controller_commandline_committed_search);
     RUN_TEST(test_controller_pass_and_esc);
     RUN_TEST(test_controller_remap_recursion);
@@ -1584,12 +1692,16 @@ int run_behavior_main(void) {
     RUN_TEST(test_controller_cmd_and_empty_chars);
     RUN_TEST(test_controller_map_ex_command_route);
     RUN_TEST(test_controller_map_infinite_guard);
-    RUN_TEST(test_autocmd_multiword_and_remove_all);
-    RUN_TEST(test_ex_bma_and_shortcut_errors);
-    RUN_TEST(test_ex_autocmd_fire_executor);
     RUN_TEST(test_controller_ambiguous_and_register);
+
+    RUN_TEST(test_hint_engine_parse_prompt);
+    RUN_TEST(test_hint_engine_actions_and_dispatch);
     RUN_TEST(test_permission_geolocation);
     RUN_TEST(test_permission_media_capture);
+    RUN_TEST(test_autocmd_multiword_and_remove_all);
+
+    RUN_TEST(test_completion_dropdown);
+    RUN_TEST(test_context_menu_build);
     RUN_TEST(test_bookmark_store);
 
     return RUN_ALL_TESTS();
