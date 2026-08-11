@@ -111,11 +111,11 @@ WKWebView ceiling.
   Add-Bookmark/Copy-URL actions; menu-tree builder lives in Foundation-only
   VimbContextMenu (unit-tested: test_context_menu_build).
 
-### WS-3  Editor async read-back (`editor-command` polish) — `[claimed]`
+### WS-3  Editor async read-back (`editor-command` polish) — `[done]`
 - **Goal:** make the external-editor flow work with async editors (the
   `open -t`/TextEdit default) by polling/watching the temp file so edits come
   back; keep blocking editors (vim/\$EDITOR) working. Add a bounded wait so it
-  degrades gracefully. `[done]`
+  degrades gracefully.
   - Note: VimbEditor now runs a two-phase wait — blocking editors read back on
     process exit; async editors are picked up by a bounded main-run-loop poll
     (content-sensitive change detect). Test injects `editorTempPath`,
@@ -128,10 +128,10 @@ WKWebView ceiling.
 - **Reference:** `src/main.c ex_open` + `input.c`.
 - **Memory tag:** `editor`.
 
-### WS-4  Bookmarks browser UI (`bookmark.c` polish) — `[claimed]`
+### WS-4  Bookmarks browser UI (`bookmark.c` polish) — `[done]`
 - **Goal:** add a keyboard-reachable bookmark browser (list + filter + open +
   delete) beyond the existing `:bma`/`:bmr` commands, mirroring the gB-style
-  flow used in upstream Linux vimb. `[done]`
+  flow used in upstream Linux vimb.
   - Note: VimbBookmarkStore (Foundation CRUD, tested) + VimbBookmarkBrowser
     (AppKit panel) added; reachable via `:bookmarks`, File▸Bookmarks (⌘B).
 - **Owns:** `macos/VimbBookmarkStore.m/h`, `macos/VimbBookmarkBrowser.m/h`,

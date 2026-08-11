@@ -9,6 +9,8 @@
 #import "VimbWindow.h"
 #import "VimbEditor.h"
 #import "VimbBookmarkBrowser.h"
+#import "CompletionDropdown.h"
+#import "CompletionCandidate.h"
 
 static const CGFloat kStatusHeight = 24.0;
 
@@ -30,6 +32,7 @@ static const CGFloat kStatusHeight = 24.0;
 @property(nonatomic, strong) NSMutableArray<NSButton *> *tabButtons;
 @property(nonatomic, strong) NSView *webContainer;
 @property(nonatomic, strong) VimbCommandField *commandField;
+@property(nonatomic, strong) CompletionDropdown *completionDropdown;
 @property(nonatomic, strong) NSTextField *statusField;
 @property(nonatomic, strong) NSView *currentWebviewHolder;
 @property(nonatomic, copy, nullable) NSString *commandPrefix;
@@ -171,6 +174,16 @@ static const CGFloat kStatusHeight = 24.0;
         [self.statusField.trailingAnchor constraintLessThanOrEqualToAnchor:self.webContainer.trailingAnchor constant:-12],
         [self.statusField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-4],
     ]];
+
+    // Completion dropdown (parity with src/completion.c): an opaque list that
+    // appears above the command field while the user types a :/ command or a
+    // /? search. Positioned via presentRelativeToRect:inView: on reveal so the
+    // AppKit view manages its own frame (it uses a springs/struts layout).
+    CompletionDropdown *dd = [[CompletionDropdown alloc] initWithFrame:NSMakeRect(10, 0, 320, 160)];
+    dd.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
+    dd.hidden = YES;
+    [self.webContainer addSubview:dd];
+    self.completionDropdown = dd;
 
     // Fill: webContainer expands.
     [v setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
@@ -1379,6 +1392,15 @@ static const CGFloat kStatusHeight = 24.0;
         self.completionIndex = 0;
     }
 
+    // Live-populate the completion dropdown (parity with src/completion.c: the
+    // candidate list follows the current command/search text as the user types).
+    VimMode m = self.vim.mode;
+    if (m == VimModeCommand || m == VimModeSearch) {
+        [self refreshCompletionCandidatesForLine:self.commandField.stringValue];
+    } else {
+        [self.completionDropdown dismiss];
+    }
+
     // Incremental search (vim's 'incsearch'): while the user types a / or ?
     // search, highlight matches live instead of waiting for Enter. Finding on
     // an empty query would just clear the previous highlight, so skip it.
@@ -1399,9 +1421,33 @@ static const CGFloat kStatusHeight = 24.0;
 
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector {
     if (control == self.commandField) {
+        // Dropdown-driven completion first: Tab/Shift-Tab step the highlight,
+        // Enter applies the highlighted candidate, Esc dismisses.
+        if ([self.completionDropdown respondsToSelector:@selector(moveSelectionBy:)]) {
+            if (commandSelector == @selector(insertTab:) && self.completionDropdown.hasCandidates) {
+                [self.completionDropdown moveSelectionBy:1];
+                return YES;
+            }
+            if (commandSelector == @selector(insertBacktab:) && self.completionDropdown.hasCandidates) {
+                [self.completionDropdown moveSelectionBy:-1];
+                return YES;
+            }
+            if ((commandSelector == @selector(insertNewline:)) && self.completionDropdown.hasCandidates
+                && self.completionDropdown.selectedValue.length > 0) {
+                NSString *choice = self.completionDropdown.selectedValue;
+                [self.completionDropdown dismiss];
+                [self commandLineCommittedWithCompletion:choice];
+                return YES;
+            }
+            if ((commandSelector == @selector(cancelOperation:)) && self.completionDropdown.hasCandidates) {
+                [self.completionDropdown dismiss];
+                return YES;
+            }
+        }
         if (commandSelector == @selector(insertNewline:)) {
             NSString *line = self.commandField.stringValue;
             VimMode m = self.vim.mode;
+            [self.completionDropdown dismiss];
             [self.commandField.animator setAlphaValue:0.0];
             if (m == VimModeCommand) { [self commandLineExecuted:line]; }
             else if (m == VimModeSearch) { [self.vim commandLineCommitted:line]; }
@@ -1410,6 +1456,7 @@ static const CGFloat kStatusHeight = 24.0;
             return YES;
         }
         if (commandSelector == @selector(cancelOperation:)) {
+            [self.completionDropdown dismiss];
             [self.commandField.animator setAlphaValue:0.0];
             [self.vim reset];
             [self.window makeFirstResponder:self.activeTab.view];
@@ -1488,15 +1535,10 @@ static const CGFloat kStatusHeight = 24.0;
 // :bma/:bmr bookmarks, and /-? search history.
 - (void)completeCommandField { [self completeCommandFieldDirection:1]; }
 
-- (void)completeCommandFieldDirection:(NSInteger)direction {
-    NSString *line = self.commandField.stringValue;
-
-    // If a completion is already active, step to the next/prev candidate.
-    if (self.completionCycle.count > 0) {
-        [self stepCompletion:direction];
-        return;
-    }
-
+// Collect ordered completion candidate strings for a command/search line,
+// without applying anything. Reused by the Tab-cycling path and the live
+// completion dropdown (parity with src/completion.c candidate generation).
+- (NSArray<NSString *> *)completionCandidatesForLine:(NSString *)line {
     NSMutableArray<NSString *> *cands = [NSMutableArray array];
 
     if ([line hasPrefix:@"/"] || [line hasPrefix:@"?"]) {
@@ -1504,9 +1546,7 @@ static const CGFloat kStatusHeight = 24.0;
         for (NSString *h in [[VimbConfig shared].searchStore lines]) {
             if ([h hasPrefix:prefix] && ![cands containsObject:h]) { [cands addObject:h]; }
         }
-        if (cands.count == 1) { [self applyCompletion:[NSString stringWithFormat:@"%C", [line characterAtIndex:0]] appendTo:[line substringFromIndex:1] value:cands[0]]; }
-        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
-        return;
+        return cands;
     }
 
     if ([line hasPrefix:@"open "] || [line hasPrefix:@"tabopen "]) {
@@ -1519,13 +1559,7 @@ static const CGFloat kStatusHeight = 24.0;
             for (NSString *h in [[VimbConfig shared].historyStore lines]) { if ([h hasPrefix:prefix] && ![cands containsObject:h]) [cands addObject:h]; }
             for (NSString *c in [[VimbConfig shared].closedStore lines]) { if ([c hasPrefix:prefix] && ![cands containsObject:c]) [cands addObject:c]; }
         }
-        if (cands.count == 1) {
-            NSString *full = cands[0];
-            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", tab ? @"tabopen " : @"open ", full];
-        } else if (cands.count > 1) {
-            [self startCompletionCycle:cands ofLine:line];
-        }
-        return;
+        return cands;
     }
 
     if ([line hasPrefix:@"set "]) {
@@ -1533,19 +1567,13 @@ static const CGFloat kStatusHeight = 24.0;
         for (NSString *name in [VimbConfig shared].settings.allKeys) {
             if ([name hasPrefix:prefix]) { [cands addObject:name]; }
         }
-        if (cands.count == 1) { self.commandField.stringValue = [NSString stringWithFormat:@"set %@", cands[0]]; }
-        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
-        return;
+        return cands;
     }
 
     if ([line hasPrefix:@"bma "] || [line hasPrefix:@"bmr "]) {
         NSString *prefix = [line containsString:@" "] ? [line substringFromIndex:([line rangeOfString:@" "].location + 1)] : @"";
         for (NSDictionary *b in [self bookmarksByPrefix:prefix]) { [cands addObject:b[@"url"]]; }
-        if (cands.count == 1) {
-            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@",
-                [line hasPrefix:@"bmr "] ? @"bmr " : @"bma ", cands[0]];
-        } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
-        return;
+        return cands;
     }
 
     if ([line hasPrefix:@"bdelete "] || [line hasPrefix:@"bd "] || [line hasPrefix:@"b "]) {
@@ -1555,11 +1583,7 @@ static const CGFloat kStatusHeight = 24.0;
             NSString *ttitle = t.title ?: @"";
             if ([turl hasPrefix:prefix] || [ttitle hasPrefix:prefix]) { [cands addObject:turl]; }
         }
-        if (cands.count == 1) {
-            NSString *head = [line hasPrefix:@"bd "] ? @"bd " : ([line hasPrefix:@"b "] ? @"b " : @"bdelete ");
-            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", head, cands[0]];
-        } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
-        return;
+        return cands;
     }
 
     // Bare command name completion (the leading ':' is not in the field text).
@@ -1570,11 +1594,83 @@ static const CGFloat kStatusHeight = 24.0;
         for (NSString *name in self.exEngine.commandNames) {
             if ([name hasPrefix:cmdPrefix]) { [cands addObject:name]; }
         }
+    }
+    return cands;
+}
+
+// Refresh the live completion dropdown for the current command/search text
+// (parity with src/completion.c: the candidate list tracks what is typed).
+- (void)refreshCompletionCandidatesForLine:(NSString *)line {
+    if (!self.completionDropdown) { return; }
+    if (line.length == 0) { [self.completionDropdown dismiss]; return; }
+    NSArray<NSString *> *strings = [self completionCandidatesForLine:line];
+    if (strings.count == 0) { [self.completionDropdown dismiss]; return; }
+    NSMutableArray<CompletionCandidate *> *candidates = [NSMutableArray array];
+    for (NSString *s in strings) {
+        [candidates addObject:[CompletionCandidate candidateWithValue:s detail:nil]];
+    }
+    [self.completionDropdown updateWithCandidates:candidates];
+    // Anchor just above the command field: pass a rect whose origin is the
+    // field's top edge (the class positions its top edge at rect.origin.y).
+    NSRect cf = self.commandField.frame;
+    NSRect anchor = NSMakeRect(cf.origin.x, cf.origin.y + cf.size.height, cf.size.width, cf.size.height);
+    [self.completionDropdown presentRelativeToRect:anchor inView:self.webContainer];
+}
+
+- (void)completeCommandFieldDirection:(NSInteger)direction {
+    NSString *line = self.commandField.stringValue;
+
+    // If a completion is already active, step to the next/prev candidate.
+    if (self.completionCycle.count > 0) {
+        [self stepCompletion:direction];
+        return;
+    }
+
+    NSArray<NSString *> *cands = [self completionCandidatesForLine:line];
+
+    if ([line hasPrefix:@"/"] || [line hasPrefix:@"?"]) {
+        if (cands.count == 1) { [self applyCompletion:[NSString stringWithFormat:@"%C", [line characterAtIndex:0]] appendTo:[line substringFromIndex:1] value:cands[0]]; }
+        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    if ([line hasPrefix:@"open "] || [line hasPrefix:@"tabopen "]) {
+        BOOL tab = [line hasPrefix:@"tabopen "];
         if (cands.count == 1) {
-            self.commandField.stringValue = cands[0];
+            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", tab ? @"tabopen " : @"open ", cands[0]];
         } else if (cands.count > 1) {
             [self startCompletionCycle:cands ofLine:line];
         }
+        return;
+    }
+
+    if ([line hasPrefix:@"set "]) {
+        if (cands.count == 1) { self.commandField.stringValue = [NSString stringWithFormat:@"set %@", cands[0]]; }
+        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    if ([line hasPrefix:@"bma "] || [line hasPrefix:@"bmr "]) {
+        if (cands.count == 1) {
+            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@",
+                [line hasPrefix:@"bmr "] ? @"bmr " : @"bma ", cands[0]];
+        } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    if ([line hasPrefix:@"bdelete "] || [line hasPrefix:@"bd "] || [line hasPrefix:@"b "]) {
+        if (cands.count == 1) {
+            NSString *head = [line hasPrefix:@"bd "] ? @"bd " : ([line hasPrefix:@"b "] ? @"b " : @"bdelete ");
+            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", head, cands[0]];
+        } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    // Bare command name completion.
+    if (cands.count == 1) {
+        self.commandField.stringValue = cands[0];
+    } else if (cands.count > 1) {
+        [self startCompletionCycle:cands ofLine:line];
     }
 }
 
@@ -1600,6 +1696,24 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)applyCompletion:(NSString *)prefix appendTo:(NSString *)edited value:(NSString *)value {
     self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", prefix, value];
     (void)edited;
+}
+
+// Called when Enter is pressed while a completion row is highlighted: apply the
+// selected completion to the trailing token of the current command line, then
+// hand off to the normal command-line execution (parity with src/completion.c:
+// choosing a candidate completes the text, Enter then runs the command).
+- (void)commandLineCommittedWithCompletion:(NSString *)choice {
+    NSString *cur = self.commandField.stringValue;
+    NSRange sp = [cur rangeOfString:@" " options:NSBackwardsSearch];
+    NSString *head = (sp.location == NSNotFound) ? @"" : [cur substringToIndex:sp.location + 1];
+    NSString *completed = [NSString stringWithFormat:@"%@%@", head, choice];
+    self.commandField.stringValue = completed;
+    VimMode m = self.vim.mode;
+    [self.commandField.animator setAlphaValue:0.0];
+    if (m == VimModeCommand) { [self commandLineExecuted:completed]; }
+    else if (m == VimModeSearch) { [self.vim commandLineCommitted:completed]; }
+    [self.vim reset];
+    [self.window makeFirstResponder:self.activeTab.view];
 }
 
 #pragma mark - Menu / responder actions
