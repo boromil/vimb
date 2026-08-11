@@ -15,6 +15,7 @@
 #import "VimbEditor.h"
 #import "VimbHintEngine.h"
 #import "VimbPermissionPolicy.h"
+#import "VimbBookmarkStore.h"
 
 #pragma mark - Shared spies
 
@@ -1411,6 +1412,64 @@ static void test_permission_media_capture(void) {
                           isEqualToString:@"access the camera and microphone"]);
 }
 
+#pragma mark - Bookmarks store
+
+// CRUD/list/lookup/filter for the bookmark store (parity with bookmark.c).
+static void test_bookmark_store(void) {
+    VimbBookmarkStore *store = [VimbBookmarkStore storeInTempDirectoryWithName:@"test_bookmark_store"];
+    TEST_ASSERT_NOTNULL(store);
+
+    // Empty store -> no bookmarks.
+    TEST_ASSERT_EQ_I((int)store.allBookmarks.count, 0);
+
+    // Add several bookmarks (mirrors :bma -> bookmark_add()).
+    TEST_ASSERT_TRUE([store addBookmarkWithURL:@"https://example.com" title:@"Example" tags:@"home web"]);
+    TEST_ASSERT_TRUE([store addBookmarkWithURL:@"https://git.example.org/vimb" title:@"vimb" tags:nil]);
+    TEST_ASSERT_TRUE([store addBookmarkWithURL:@"https://docs.example.com/a" title:nil tags:nil]);
+
+    TEST_ASSERT_EQ_I((int)store.allBookmarks.count, 3);
+
+    // Lookup by URL.
+    VimbBookmark *bm = [store bookmarkForURL:@"https://example.com"];
+    TEST_ASSERT_NOTNULL(bm);
+    TEST_ASSERT_TRUE([bm.title isEqualToString:@"Example"]);
+    TEST_ASSERT_TRUE([bm.tags isEqualToString:@"home web"]);
+    TEST_ASSERT_TRUE([store containsBookmarkForURL:@"https://example.com"]);
+    TEST_ASSERT_FALSE([store containsBookmarkForURL:@"https://missing.example"]);
+
+    // Filter: multi-token prefix match over tags/title/url.
+    NSArray<VimbBookmark *> *matching = [store bookmarksMatching:@"exa"];
+    TEST_ASSERT_EQ_I((int)matching.count, 3); // all contain "example"-ish path/title
+    matching = [store bookmarksMatching:@"home web"];
+    TEST_ASSERT_EQ_I((int)matching.count, 1); // only the tagged entry matches both parts
+    TEST_ASSERT_TRUE([matching.firstObject.url isEqualToString:@"https://example.com"]);
+    // Empty query returns everything.
+    TEST_ASSERT_EQ_I((int)[store bookmarksMatching:@""].count, 3);
+
+    // Duplicate add on the same URL replaces (keeps unique) at the front.
+    TEST_ASSERT_TRUE([store addBookmarkWithURL:@"https://example.com" title:@"Example2" tags:@"web"]);
+    TEST_ASSERT_EQ_I((int)store.allBookmarks.count, 3);
+    VimbBookmark *dup = [store bookmarkForURL:@"https://example.com"];
+    TEST_ASSERT_TRUE([dup.title isEqualToString:@"Example2"]);
+    TEST_ASSERT_TRUE([store.allBookmarks.firstObject.url isEqualToString:@"https://example.com"]);
+    // Post-replace filter reflects the new tags (old "home" tag is gone).
+    matching = [store bookmarksMatching:@"web"];
+    TEST_ASSERT_EQ_I((int)matching.count, 1);
+
+    // Remove.
+    TEST_ASSERT_TRUE([store removeBookmarkForURL:@"https://git.example.org/vimb"]);
+    TEST_ASSERT_FALSE([store containsBookmarkForURL:@"https://git.example.org/vimb"]);
+    TEST_ASSERT_EQ_I((int)store.allBookmarks.count, 2);
+    // Removing a non-existent URL is a no-op.
+    TEST_ASSERT_FALSE([store removeBookmarkForURL:@"https://nope.example"]);
+    TEST_ASSERT_EQ_I((int)store.allBookmarks.count, 2);
+
+    // Persistence: a fresh store on the same path reloads the same entries.
+    VimbBookmarkStore *reload = [[VimbBookmarkStore alloc] initWithPath:store.path];
+    TEST_ASSERT_EQ_I((int)reload.allBookmarks.count, 2);
+    TEST_ASSERT_NOTNULL([reload bookmarkForURL:@"https://docs.example.com/a"]);
+}
+
 #pragma mark - main
 
 // Entry point invoked from test_main.m's main(). Returns 0 on success.
@@ -1486,6 +1545,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_controller_ambiguous_and_register);
     RUN_TEST(test_permission_geolocation);
     RUN_TEST(test_permission_media_capture);
+    RUN_TEST(test_bookmark_store);
 
     return RUN_ALL_TESTS();
 }

@@ -8,6 +8,7 @@
 #import "VimbCommandField.h"
 #import "VimbWindow.h"
 #import "VimbEditor.h"
+#import "VimbBookmarkBrowser.h"
 
 static const CGFloat kStatusHeight = 24.0;
 
@@ -715,6 +716,18 @@ static const CGFloat kStatusHeight = 24.0;
     }
     [[VimbConfig shared].bookmarkStore writeAll:remaining];
     [self showMessage:removed ? @"bookmark removed" : @"no bookmark removed" error:!removed];
+}
+
+// :bookmarks — present the bookmark browser panel (parity with src/bookmark.c's
+// gB-style browse flow).
+- (void)exShowBookmarks {
+    [[VimbBookmarkBrowser sharedBrowser] presentBookmarks];
+}
+
+// Menu-bar / keyboard shortcut entry point (File ▸ Bookmarks).
+- (IBAction)showBookmarks:(id)sender {
+    (void)sender;
+    [[VimbBookmarkBrowser sharedBrowser] presentBookmarks];
 }
 
 - (NSArray<NSDictionary *> *)bookmarksByPrefix:(NSString *)prefix {

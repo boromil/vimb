@@ -28,6 +28,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)exShowMessages;
 - (void)exBookmarkAdd:(NSString *)url title:(NSString *)title;
 - (void)exBookmarkRemove:(NSString *)match;
+// Optional: open the bookmark browser panel. Implemented by the window
+// controller; treated as a no-op by actors that don't support it.
+@optional
+- (void)exShowBookmarks;
 @end
 
 @interface VimbEx : NSObject

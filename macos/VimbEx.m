@@ -21,6 +21,7 @@ typedef NS_ENUM(NSInteger, ExCmd) {
             @[@"augroup", @"autocmd"],
             @[@"bma", @"bookmark"],
             @[@"bmr", @"bookmark"],
+            @[@"bookmarks", @"bookmarks"],
             @[@"cmap", @"map"], @[@"cnoremap", @"map"], @[@"cunmap", @"unmap"],
             @[@"cleardata", @"message"],
             @[@"hardcopy", @"message"],
@@ -191,6 +192,12 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         return NO;
     }
     if ([type isEqualToString:@"shell"]) { [a exShell:arg]; return NO; }
+    if ([type isEqualToString:@"bookmarks"]) {
+        if ([a respondsToSelector:@selector(exShowBookmarks)]) {
+            [a exShowBookmarks];
+        }
+        return NO;
+    }
     if ([type isEqualToString:@"message"]) { [a exMessage:@"" error:NO]; return NO; }
     return NO;
 }
