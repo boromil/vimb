@@ -311,6 +311,12 @@ static const CGFloat kStatusHeight = 24.0;
     [self updateStatus];
 }
 
+// KeyboardWebViewDelegate: route a popup / target=_blank URL from the web view
+// into a new tab (or the current tab when prevent-newwindow is set).
+- (void)webView:(KeyboardWebView *)view openTargetURL:(NSString *)url newTab:(BOOL)newTab {
+    [self loadURL:url inNewTab:newTab];
+}
+
 // Decide the URL to load, routing non-URL input through the search/shortcut
 // engine (port of vb_load_uri). "https://example.com" loads direct; a bare
 // "example.com" becomes http://example.com; a search query like "foo bar" or

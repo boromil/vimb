@@ -152,6 +152,34 @@ WKWebView ceiling.
   KVC-on-`WKPreferences` init hang. Do not claim. Documented in
   `macos/settings-application.md` (memory tag `settings`).
 
+### WS-7  Popup / new-window policy (`main.c on_webview_create` parity) — `[done]`
+- **Goal:** handle `window.open` and `target=_blank` popups via the WKUIDelegate
+  `-webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:`
+  callback, honoring `prevent-newwindow` (ON → load in current tab, OFF → new tab).
+  Button/media/JS popups are gated natively by `javaScriptCanOpenWindowsAutomatically`.
+- **Owns:** `macos/VimbWindowPolicy.{h,m}` (Foundation-only, tested),
+  `macos/KeyboardWebView.m` (the delegate method only), `macos/KeyboardWebView.h`
+  (one optional protocol method), `macos/BrowserWindowController.m`
+  (`webView:openTargetURL:newTab:`), `macos/tests/test_behavior.m`
+  (`test_window_policy`).
+- **Memory tag:** `window_policy`.
+- **Done:** `createWebViewWithConfiguration:` maps `WKNavigationType` +
+  `prevent-newwindow` to Current/NewTab/Block and routes the URL via the delegate.
+
+### WS-8  Settings application closure (config-time WK properties) — `[done]`
+- **Goal:** apply the remaining *portable* settings that must be set on
+  `WKWebViewConfiguration`/`WKPreferences` before the web view exists:
+  `print-backgrounds` → `prefs.shouldPrintBackgrounds` (macOS 13.3+);
+  `media-playback-requires-user-gesture` → `mediaTypesRequiringUserActionForPlayback`;
+  `cookie-accept` → `httpCookieStore setCookiePolicy:` (macOS 14+; "origin" has no
+  macOS WK equivalent → best-effort Allow). `media-playback-allows-inline` is iOS-only
+  → no-op on desktop (inline playback is default), documented n/a.
+- **Owns:** `macos/KeyboardWebView.m` (config-init section only),
+  `macos/VimbConfig.m` (defaults already present; no change needed).
+- **Memory tag:** `settings`.
+- **Done:** applied in `initWithFrame:` before `super init`; verified the config
+  path does NOT trigger the KVC-on-`WKPreferences` init hang (app launches).
+
 ---
 
 ## Workbook / claim sheet
@@ -168,6 +196,8 @@ commit order and does the serial Makefile-fragment includes.
 | 4  | Bookmarks UI       | VimbBookmark*.*, frag ws4        | `[done]`       |
 | 5  | Notification perm  | — (not portable)                 | `[n/a]`       |
 | 6  | Non-public settings| — (not portable)                 | `[n/a]`       |
+| 7  | Popup/new-window   | VimbWindowPolicy.*, frag ws7     | `[done]`       |
+| 8  | Settings apply-closure | KeyboardWebView (config-time), no frag | `[done]`       |
 
 ---
 

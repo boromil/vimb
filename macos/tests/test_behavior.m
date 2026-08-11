@@ -18,6 +18,7 @@
 #import "VimbBookmarkStore.h"
 #import "CompletionCandidate.h"
 #import "VimbContextMenu.h"
+#import "VimbWindowPolicy.h"
 
 #pragma mark - Shared spies
 
@@ -1458,6 +1459,34 @@ static void test_permission_media_capture(void) {
                           isEqualToString:@"access the camera and microphone"]);
 }
 
+#pragma mark - Popup / new-window policy (parity src/main.c on_webview_create + decide_new_window_action)
+
+static void test_window_policy(void) {
+    // WKNavigationTypeLinkActivated == 0.
+    const NSInteger link = 0;
+    const NSInteger form = 1;   // WKNavigationTypeFormSubmitted
+    const NSInteger other = 3;  // WKNavigationTypeOther (JS window.open)
+
+    // prevent-newwindow ON -> always route into the current tab.
+    TEST_ASSERT_EQ_I([VimbWindowPolicy targetForNavigationType:link userGesture:YES preventNewWindow:YES],
+                     VimbWindowTargetCurrent);
+    TEST_ASSERT_EQ_I([VimbWindowPolicy targetForNavigationType:other userGesture:NO preventNewWindow:YES],
+                     VimbWindowTargetCurrent);
+
+    // prevent-newwindow OFF -> user-gesture-driven requests go to a new tab.
+    TEST_ASSERT_EQ_I([VimbWindowPolicy targetForNavigationType:link userGesture:YES preventNewWindow:NO],
+                     VimbWindowTargetNewTab);
+    TEST_ASSERT_EQ_I([VimbWindowPolicy targetForNavigationType:form userGesture:YES preventNewWindow:NO],
+                     VimbWindowTargetNewTab);
+
+    // prevent-newwindow OFF + no gesture (JS window.open via navigationType Other) -> block.
+    TEST_ASSERT_EQ_I([VimbWindowPolicy targetForNavigationType:other userGesture:NO preventNewWindow:NO],
+                     VimbWindowTargetBlock);
+    // Gesture-less link is dropped rather than force-opened.
+    TEST_ASSERT_EQ_I([VimbWindowPolicy targetForNavigationType:link userGesture:NO preventNewWindow:NO],
+                     VimbWindowTargetBlock);
+}
+
 #pragma mark - Completion dropdown (WS-1, parity src/completion.c)
 
 // Foundation-only completion matcher + style parser (CompletionCandidate.m).
@@ -1698,6 +1727,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_hint_engine_actions_and_dispatch);
     RUN_TEST(test_permission_geolocation);
     RUN_TEST(test_permission_media_capture);
+    RUN_TEST(test_window_policy);
     RUN_TEST(test_autocmd_multiword_and_remove_all);
 
     RUN_TEST(test_completion_dropdown);

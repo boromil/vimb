@@ -34,7 +34,8 @@ SRCS := main.m \
         VimbHandler.m \
         VimbEditor.m \
         VimbHintEngine.m \
-        VimbPermissionPolicy.m
+        VimbPermissionPolicy.m \
+        VimbWindowPolicy.m
 
 # ---------------------------------------------------------------------------
 # Parallel sub-agent workstreams (see ../PARALLEL-SUBAGENTS.md).
@@ -105,7 +106,8 @@ TEST_SRCS := \
         VimbHandler.m \
         VimbEditor.m \
         VimbHintEngine.m \
-        VimbPermissionPolicy.m
+        VimbPermissionPolicy.m \
+        VimbWindowPolicy.m
 
 # Merge in per-workstream test sources declared via frags/*.mk.
 TEST_SRCS += $(STREAM_TEST_SRCS)

@@ -4,6 +4,7 @@
 #import "VimbPermissionPolicy.h"
 #import "VimbContextMenu.h"
 #import "VimbEx.h"
+#import "VimbWindowPolicy.h"
 
 // This view is created programmatically only (no nibs/coders), so the
 // designated-initializer consistency warnings don't apply.
@@ -135,6 +136,21 @@ static NSString *const GVimJS =
     config.defaultWebpagePreferences.allowsContentJavaScript =
         [cfg getBool:@"scripts" defaultValue:YES];
 
+    // Config-time WKWebViewConfiguration settings (parity with webkit settings
+    // in setting.c). These are public config properties — NOT KVC on WKPreferences
+    // — so they avoid the mediaPlayback* init hang noted below. They must be set
+    // before the web view is created.
+    // print-backgrounds (default on) -> WKPreferences.shouldPrintBackgrounds.
+    prefs.shouldPrintBackgrounds = [cfg getBool:@"print-backgrounds" defaultValue:YES];
+    // media-playback-requires-user-gesture (default off) -> WKAudiovisualMediaTypes
+    // (macOS 10.12+): off means no user action required for any media; on means
+    // all media require it. Note: media-playback-allows-inline has no macOS WK
+    // counterpart (it is iOS-only) — on desktop playback is inline by default,
+    // so that setting is a no-op here and stays registered but unused.
+    BOOL requireGesture = [cfg getBool:@"media-playback-requires-user-gesture" defaultValue:NO];
+    config.mediaTypesRequiringUserActionForPlayback =
+        requireGesture ? WKAudiovisualMediaTypeAll : WKAudiovisualMediaTypeNone;
+
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
     WKUserScript *script = [[WKUserScript alloc] initWithSource:GVimJS
                                                  injectionTime:WKUserScriptInjectionTimeAtDocumentStart
@@ -191,6 +207,18 @@ static NSString *const GVimJS =
         [self addObserver:self forKeyPath:@"estimatedProgress" options:0 context:NULL];
         [self addObserver:self forKeyPath:@"title" options:0 context:NULL];
         [self addObserver:self forKeyPath:@"URL" options:0 context:NULL];
+
+        // cookie-accept (parity with cookie_accept in src/setting.c). WKWebView
+        // exposes only Allow/Disallow (macOS 14+); the "origin" (no-third-party)
+        // mode has no public WKWebView equivalent, so it degrades to Allow.
+        // This setting needs the (default) data store, so apply it once here.
+        NSString *accept = [[VimbConfig shared] getString:@"cookie-accept" defaultValue:@"always"];
+        if (@available(macOS 14.0, *)) {
+            WKCookiePolicy cookiePolicy = WKCookiePolicyAllow;
+            if ([accept isEqualToString:@"never"]) { cookiePolicy = WKCookiePolicyDisallow; }
+            [config.websiteDataStore.httpCookieStore setCookiePolicy:cookiePolicy
+                                                   completionHandler:nil];
+        }
     }
     return self;
 }
@@ -363,6 +391,41 @@ static NSString *const GVimJS =
             [d webView:self didReceiveMessage:@{@"t": @"loaderror", @"s": error.localizedDescription ?: @""}];
         }
     }
+}
+
+#pragma mark - Popup / new-window policy (parity with src/main.c)
+
+// Handle window.open and target=_blank popups. We never host a child WKWebView;
+// instead we route the requested URL to a new tab (prevent-newwindow OFF) or the
+// current tab (prevent-newwindow ON), matching on_webview_create + decide_new_window_action.
+- (WKWebView *)webView:(WKWebView *)webView
+createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
+   forNavigationAction:(WKNavigationAction *)navigationAction
+        windowFeatures:(WKWindowFeatures *)windowFeatures {
+    NSInteger type = (NSInteger)navigationAction.navigationType;
+    // WKNavigationAction exposes no public user-gesture flag; a real popup
+    // (link/form) reaches us as LinkActivated/FormSubmitted, and WK only calls
+    // this delegate when it would allow the popup, so that is treated as a
+    // user gesture. Gesture-less JS window.open is gated natively by
+    // javaScriptCanOpenWindowsAutomatically (implemented in this config).
+    BOOL userGesture = (type == WKNavigationTypeLinkActivated
+                        || type == WKNavigationTypeFormSubmitted
+                        || type == WKNavigationTypeBackForward
+                        || type == WKNavigationTypeReload);
+    VimbWindowTarget target = [VimbWindowPolicy targetForNavigationType:type
+                                                            userGesture:userGesture
+                                                       preventNewWindow:[[VimbConfig shared] getBool:@"prevent-newwindow" defaultValue:NO]];
+    if (target == VimbWindowTargetBlock) {
+        return nil;
+    }
+    NSString *url = navigationAction.request.URL.absoluteString;
+    id<KeyboardWebViewDelegate> delegate = self.vbDelegate;
+    if (url.length && [delegate respondsToSelector:@selector(webView:openTargetURL:newTab:)]) {
+        [delegate webView:self
+            openTargetURL:url
+                   newTab:(target == VimbWindowTargetNewTab)];
+    }
+    return nil;
 }
 
 #pragma mark - Permissions (parity with on_permission_request in main.c)

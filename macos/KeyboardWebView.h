@@ -12,6 +12,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)webView:(KeyboardWebView *)view didUpdateProgress:(double)progress;
 - (void)webView:(KeyboardWebView *)view didFinishLoadWithURL:(nullable NSURL *)url;
 - (void)webView:(KeyboardWebView *)view didReceiveMessage:(NSDictionary *)payload;
+// Route a popup / target=_blank / window.open URL (parity with
+// on_webview_create + decide_new_window_action). newTab: YES routes to a new
+// tab, NO loads it in the current tab.
+- (void)webView:(KeyboardWebView *)view openTargetURL:(nullable NSString *)url newTab:(BOOL)newTab;
 @end
 
 @interface KeyboardWebView : WKWebView <WKNavigationDelegate, WKScriptMessageHandler, WKDownloadDelegate, WKUIDelegate>
