@@ -182,6 +182,11 @@ static NSString *const GVimJS =
         self.navigationDelegate = self;
         self.UIDelegate = self;
         self.allowsBackForwardNavigationGestures = YES;
+        // Honor the user-agent setting (parity with webkit settings in setting.c,
+        // whose user-agent maps to webkit_settings_set_user_agent). An explicit
+        // customUserAgent replaces the entire WKWebView default UA string.
+        NSString *ua = [[VimbConfig shared] getString:@"user-agent" defaultValue:@""];
+        if (ua.length) { self.customUserAgent = ua; }
         [self addObserver:self forKeyPath:@"estimatedProgress" options:0 context:NULL];
         [self addObserver:self forKeyPath:@"title" options:0 context:NULL];
         [self addObserver:self forKeyPath:@"URL" options:0 context:NULL];
