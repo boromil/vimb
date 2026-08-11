@@ -84,7 +84,7 @@ WKWebView ceiling.
   candidate-generation logic (score/rank/filter) in a Foundation-only class you
   DO test.
 
-### WS-2  Context menu (`context-menu.c` parity) — `[claimed]`
+### WS-2  Context menu (`context-menu.c` parity) — `[done]`
 - **Goal:** wire `NSMenu` on right-click in `KeyboardWebView` so the vimb
   browser actions (back/forward/reload, copy-link/URL, open-in-tab/window, hint
   shortcuts) are reachable via right-click, matching what `context-menu.c`
@@ -98,6 +98,12 @@ WKWebView ceiling.
   `menu(for:)`/`rightMouseDown:` on the super — document which works on this SDK.
 - **Reference:** `src/context-menu.c`.
 - **Memory tag:** `context_menu`.
+- **Done:** overrode `-willOpenMenu:withEvent:` on the keyboard web view (the
+  working SDK path — no public macOS WK context-menu hook exists); replaced the
+  "open … in New Window" items with "open … in New Tab" (parity with
+  fix_open_in_new_window_stock_action) and appended Home/Hint-Links/View-Source/
+  Add-Bookmark/Copy-URL actions; menu-tree builder lives in Foundation-only
+  VimbContextMenu (unit-tested: test_context_menu_build).
 
 ### WS-3  Editor async read-back (`editor-command` polish) — `[claimed]`
 - **Goal:** make the external-editor flow work with async editors (the
@@ -113,7 +119,9 @@ WKWebView ceiling.
 ### WS-4  Bookmarks browser UI (`bookmark.c` polish) — `[claimed]`
 - **Goal:** add a keyboard-reachable bookmark browser (list + filter + open +
   delete) beyond the existing `:bma`/`:bmr` commands, mirroring the gB-style
-  flow used in upstream Linux vimb.
+  flow used in upstream Linux vimb. `[done]`
+  - Note: VimbBookmarkStore (Foundation CRUD, tested) + VimbBookmarkBrowser
+    (AppKit panel) added; reachable via `:bookmarks`, File▸Bookmarks (⌘B).
 - **Owns:** `macos/VimbBookmarkStore.m/h`, `macos/VimbBookmarkBrowser.m/h`,
   `frags/ws4-bookmark.mk`, `macos/tests/test_behavior.m` (your new test
   `test_bookmark_store`), `macos/VimbConfig.m` (bookmark-store wiring ONLY if
@@ -143,9 +151,9 @@ commit order and does the serial Makefile-fragment includes.
 | ID | Stream             | Files owned                      | Status        |
 |----|--------------------|----------------------------------|---------------|
 | 1  | Completion dropdown| CompletionDropdown.*, frag ws1   | `[claimed]`    |
-| 2  | Context menu       | VimbContextMenu.*, frag ws2      | `[claimed]`    |
+| 2  | Context menu       | VimbContextMenu.*, frag ws2      | `[done]`       |
 | 3  | Editor read-back   | VimbEditor.*, frag ws3           | `[claimed]`    |
-| 4  | Bookmarks UI       | VimbBookmark*.*, frag ws4        | `[claimed]`    |
+| 4  | Bookmarks UI       | VimbBookmark*.*, frag ws4        | `[done]`       |
 | 5  | Notification perm  | — (not portable)                 | `[n/a]`       |
 | 6  | Non-public settings| — (not portable)                 | `[n/a]`       |
 
