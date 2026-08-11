@@ -73,6 +73,7 @@ static NSString *S(unichar c) {
 - (void)vimSetMark:(unichar)c { [self record:[NSString stringWithFormat:@"setmark:%C", c]]; }
 - (void)vimJumpMark:(unichar)c { [self record:[NSString stringWithFormat:@"jumpmark:%C", c]]; }
 - (void)vimViewSource { [self record:@"viewsource"]; }
+- (void)vimViewInspector { [self record:@"viewinspector"]; }
 - (void)vimZoomKey:(unichar)key count:(NSInteger)count { [self record:[NSString stringWithFormat:@"zoom:%C:%ld", key, (long)count]]; }
 - (void)vimQueuePop { [self record:@"queuepop"]; }
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count { [self record:[NSString stringWithFormat:@"incr:%d:%ld", up, (long)count]]; }
@@ -370,6 +371,24 @@ static void test_config_get_and_source_content(void) {
     TEST_ASSERT_EQ_STR(posted[0], @"set scroll-step=5");
     TEST_ASSERT_EQ_STR(posted[1], @"open example.com");
     TEST_ASSERT_EQ_STR(posted[2], @"open x.com");
+}
+
+static void test_config_settings_defaults_parity(void) {
+    VimbConfig *c = [VimbConfig shared];
+    [c loadDefaults];
+    // Defaults matching src/config.h (see VimbConfig.m registrations).
+    TEST_ASSERT_TRUE([c getBool:@"webinspector" defaultValue:NO]);         // on (TRUE) in GTK
+    TEST_ASSERT_TRUE([c getBool:@"input-autohide" defaultValue:NO]);
+    TEST_ASSERT_TRUE([c getBool:@"strict-ssl" defaultValue:NO]);
+    TEST_ASSERT_TRUE([c getBool:@"scripts" defaultValue:NO]);
+    TEST_ASSERT_TRUE([c getBool:@"stylesheet" defaultValue:NO]);
+    TEST_ASSERT_TRUE([c getBool:@"images" defaultValue:NO]);
+    TEST_ASSERT_TRUE([c getBool:@"html5-local-storage" defaultValue:NO]);
+    TEST_ASSERT_TRUE(![c getBool:@"status-bar-show-settings" defaultValue:YES]);
+    TEST_ASSERT_TRUE(![c getBool:@"dark-mode" defaultValue:YES]);
+    TEST_ASSERT_EQ_STR([c getString:@"hint-keys" defaultValue:@""], @"0123456789");
+    TEST_ASSERT_EQ_STR([c getString:@"cookie-accept" defaultValue:@""], @"always");
+    TEST_ASSERT_EQ_STR([c getString:@"histignore" defaultValue:@""], @"^(about:)|(file:)");
 }
 
 static void test_config_convert_edge_cases(void) {
@@ -1062,7 +1081,7 @@ static void test_controller_gcmd(void) {
     feed(vc, @"g"); feed(vc, @"0"); TEST_ASSERT_TRUE([spy.calls containsObject:@"gototab:0"]);
     feed(vc, @"g"); feed(vc, @"$"); TEST_ASSERT_TRUE([spy.calls containsObject:@"gototab:9223372036854775807"]);
     feed(vc, @"gf"); TEST_ASSERT_TRUE([spy.calls containsObject:@"viewsource"]);
-    feed(vc, @"gF"); TEST_ASSERT_TRUE([spy.calls containsObject:@"viewsource"]);
+    feed(vc, @"gF"); TEST_ASSERT_TRUE([spy.calls containsObject:@"viewinspector"]);
     feed(vc, @"gu"); TEST_ASSERT_TRUE([spy.calls containsObject:@"gohomeurl"]);
     feed(vc, @"gU"); TEST_ASSERT_TRUE([spy.calls containsObject:@"gohomeurl"]);
     feed(vc, @"g"); feed(vc, @";"); feed(vc, @"w"); TEST_ASSERT_TRUE([spy.calls containsObject:@"toggleshints"]);
@@ -1673,6 +1692,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_shared_initialized_with_defaults);
 
     RUN_TEST(test_config_get_and_source_content);
+    RUN_TEST(test_config_settings_defaults_parity);
     RUN_TEST(test_config_convert_edge_cases);
 
     RUN_TEST(test_engine_global_mark_trim);

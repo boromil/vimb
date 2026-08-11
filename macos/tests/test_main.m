@@ -81,6 +81,7 @@ typedef NS_ENUM(NSInteger, ScrollMode) { ScrollModeNone = 0, ScrollModeScroll };
 - (void)vimSetMark:(unichar)c {}
 - (void)vimJumpMark:(unichar)c {}
 - (void)vimViewSource {}
+- (void)vimViewInspector {}
 - (void)vimZoom:(BOOL)in {}
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count {}
 - (void)vimQuit {}

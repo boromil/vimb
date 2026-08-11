@@ -53,7 +53,8 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimOpenEditor;                      // Ctrl-T in input / ;e hint: edit focused field
 - (void)vimSetMark:(unichar)c;              // m<char>
 - (void)vimJumpMark:(unichar)c;             // '<char>
-- (void)vimViewSource;                      // gf/gF
+- (void)vimViewSource;                      // gf
+- (void)vimViewInspector;                   // gF: in-app DOM inspector (GTK view_inspector)
 - (void)vimZoomKey:(unichar)key count:(NSInteger)count;  // z + i/I/o/O/z
 - (void)vimQueuePop;                            // ^P: pop and load queue next
 - (void)vimIncrement:(BOOL)up count:(NSInteger)count;  // ^A / ^X

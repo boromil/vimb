@@ -621,8 +621,10 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
             [d vimGotoTab:NSNotFound];
             return HBResultComplete;
         case 'f':
-        case 'F':
             [d vimViewSource];
+            return HBResultComplete;
+        case 'F':
+            [d vimViewInspector];
             return HBResultComplete;
         case 'u': case 'U':
             [d vimGoHomeURL];

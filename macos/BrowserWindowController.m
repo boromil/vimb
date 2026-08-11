@@ -34,6 +34,7 @@ static const CGFloat kStatusHeight = 24.0;
 @property(nonatomic, strong) VimbCommandField *commandField;
 @property(nonatomic, strong) CompletionDropdown *completionDropdown;
 @property(nonatomic, strong) NSTextField *statusField;
+@property(nonatomic, strong) NSTextField *settingsIndicator;
 @property(nonatomic, strong) NSView *currentWebviewHolder;
 @property(nonatomic, copy, nullable) NSString *commandPrefix;
 @property(nonatomic, assign) BOOL currentHintGmode;   // whether the active hint run is g-mode (keep-open)
@@ -165,14 +166,26 @@ static const CGFloat kStatusHeight = 24.0;
     self.statusField.translatesAutoresizingMaskIntoConstraints = NO;
     [self.webContainer addSubview:self.statusField];
 
+    // status-bar-show-settings: right-aligned settings token (parity with
+    // src/main.c STATUS_VARAIBLE_SHOW). Hidden unless the setting is on.
+    self.settingsIndicator = [NSTextField labelWithString:@""];
+    self.settingsIndicator.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    self.settingsIndicator.textColor = [NSColor tertiaryLabelColor];
+    self.settingsIndicator.alignment = NSTextAlignmentRight;
+    self.settingsIndicator.translatesAutoresizingMaskIntoConstraints = NO;
+    self.settingsIndicator.hidden = YES;
+    [self.webContainer addSubview:self.settingsIndicator];
+
     [NSLayoutConstraint activateConstraints:@[
         [self.commandField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:10],
         [self.commandField.trailingAnchor constraintLessThanOrEqualToAnchor:self.webContainer.trailingAnchor constant:-120],
         [self.commandField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-8],
         [self.commandField.heightAnchor constraintEqualToConstant:kStatusHeight],
         [self.statusField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:12],
-        [self.statusField.trailingAnchor constraintLessThanOrEqualToAnchor:self.webContainer.trailingAnchor constant:-12],
         [self.statusField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-4],
+        [self.settingsIndicator.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.statusField.trailingAnchor constant:8],
+        [self.settingsIndicator.trailingAnchor constraintEqualToAnchor:self.webContainer.trailingAnchor constant:-12],
+        [self.settingsIndicator.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-4],
     ]];
 
     // Completion dropdown (parity with src/completion.c): an opaque list that
@@ -768,19 +781,33 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)showMessage:(NSString *)message error:(BOOL)error {
     self.statusField.stringValue = message ?: @"";
     self.statusField.textColor = error ? [NSColor systemRedColor] : [NSColor secondaryLabelColor];
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-        ctx.duration = 0.15;
+    // input-autohide mirrors vimb setting.c input_autohide: with it ON the
+    // status bar hides whenever empty; OFF keeps it always visible.
+    if ([self inputAutohide]) {
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+            ctx.duration = 0.15;
+            self.statusField.alphaValue = 1.0;
+        } completionHandler:nil];
+    } else {
         self.statusField.alphaValue = 1.0;
-    } completionHandler:nil];
+    }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if ([self.statusField.stringValue isEqualToString:message]) {
-            [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-                ctx.duration = 0.2;
-                self.statusField.alphaValue = 0.0;
-            } completionHandler:nil];
             self.statusField.stringValue = @"";
+            if ([self inputAutohide]) {
+                [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+                    ctx.duration = 0.2;
+                    self.statusField.alphaValue = 0.0;
+                } completionHandler:nil];
+            } else {
+                [self updateStatus];
+            }
         }
     });
+}
+
+- (BOOL)inputAutohide {
+    return [[VimbConfig shared] getBool:@"input-autohide" defaultValue:YES];
 }
 
 - (void)showCommandLine {
@@ -804,6 +831,36 @@ static const CGFloat kStatusHeight = 24.0;
     if (!self.activeTab) { return; }
     NSString *url = self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString ?: @"";
     self.statusField.stringValue = url;
+    // autohide ON: the bar only appears transiently (messages), so keep the
+    // URL bar hidden; OFF: show the URL persistently (always-visible bar).
+    if ([self inputAutohide]) {
+        self.statusField.alphaValue = 0.0;
+    } else {
+        self.statusField.alphaValue = 1.0;
+    }
+    [self updateSettingsIndicator];
+}
+
+// status-bar-show-settings: render the STATUS_VARAIBLE_SHOW token (parity with
+// src/main.c). Entries follow src/config.def.h; no incognito mode here so the
+// 'E/e' slot stays lowercase like the default non-incognito state.
+- (void)updateSettingsIndicator {
+    VimbConfig *cfg = [VimbConfig shared];
+    BOOL show = [cfg getBool:@"status-bar-show-settings" defaultValue:NO];
+    self.settingsIndicator.hidden = !show;
+    if (!show) { return; }
+    NSString *cookie = [cfg getString:@"cookie-accept" defaultValue:@"always"];
+    unichar ck = [cookie isEqualToString:@"always"] ? 'A' : ([cookie isEqualToString:@"origin"] ? '@' : 'a');
+    unichar tk[8];
+    tk[0] = ck;
+    tk[1] = [cfg getBool:@"dark-mode" defaultValue:NO] ? 'D' : 'd';
+    tk[2] = 'e'; // no incognito -> default non-incognito
+    tk[3] = [cfg getBool:@"images" defaultValue:YES] ? 'I' : 'i';
+    tk[4] = [cfg getBool:@"html5-local-storage" defaultValue:YES] ? 'L' : 'l';
+    tk[5] = [cfg getBool:@"stylesheet" defaultValue:YES] ? 'M' : 'm';
+    tk[6] = [cfg getBool:@"scripts" defaultValue:YES] ? 'S' : 's';
+    tk[7] = [cfg getBool:@"strict-ssl" defaultValue:YES] ? 'T' : 't';
+    self.settingsIndicator.stringValue = [NSString stringWithCharacters:tk length:8];
 }
 
 #pragma mark - Window delegate
@@ -841,6 +898,7 @@ static const CGFloat kStatusHeight = 24.0;
     // progress indicator is not available on this SDK.
     if (view == self.activeTab.webView && progress > 0.0 && progress < 1.0) {
         self.statusField.stringValue = [NSString stringWithFormat:@"loading… %d%%", (int)(progress * 100)];
+        if (![self inputAutohide]) { self.statusField.alphaValue = 1.0; }
     }
 }
 
@@ -1210,6 +1268,62 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)openViewSourceTabWithHTML:(NSString *)html {
     [self newTabInWindow];
     [self.activeTab.webView loadHTMLString:html baseURL:nil];
+}
+
+// gF: open an in-app DOM inspector for the current page (GTK
+// normal_view_inspector). WKWebView exposes no public API to open its native
+// WebKit inspector programmatically, so this renders a collapsed DOM tree in a
+// new tab, gated on the webinspector setting like GTK's developer-extras.
+- (void)vimViewInspector {
+    if (![[VimbConfig shared] getBool:@"webinspector" defaultValue:NO]) {
+        [self showMessage:@"webinspector is not enabled" error:YES];
+        return;
+    }
+    WKWebView *wv = self.activeTab.webView;
+    if (!wv.URL) { [self showMessage:@"cannot inspect: no page loaded" error:YES]; return; }
+    __weak typeof(self) weakSelf = self;
+    // Serialize a focused DOM tree (tag, id/class, text, href) capped by node
+    // count/depth to stay fast on large pages. Returns a full HTML document.
+    NSString *js =
+    @"(function(){"
+    "  const CAP=400, DEPTH=8;"
+    "  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');"
+    "  let n=0, html='<ul>';"
+    "  function walk(el,d){"
+    "    for(const child of el.children){"
+    "      if(child.nodeType!==1){continue;}"
+    "      if(++n>CAP||d>DEPTH){html+='<li>…</li>';continue;}"
+    "      const tag=child.tagName.toLowerCase();"
+    "      let label='<'+tag;"
+    "      if(child.id)label+=' id=\"'+esc(child.id)+'\"';"
+    "      if(child.className&&typeof child.className==='string')label+=' class=\"'+esc(child.className)+'\"';"
+    "      label+='>';"
+    "      let txt='';"
+    "      if(child.children.length===0){ const t=(child.textContent||'').trim(); txt=t?esc(t.slice(0,80)):''; }"
+    "      const href=child.href?(' href=\"'+esc(child.href)+'\"'):'';"
+    "      html+='<li><details'+(d<2?' open':'')+'><summary>'+label+href+(txt?' '+txt:'')+'</summary>';"
+    "      if(child.children.length)walk(child,d+1);"
+    "      html+='</details></li>';"
+    "    }"
+    "  }"
+    "  walk(document.documentElement||document.body,0);"
+    "  html+='</ul>';"
+    "  return '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>"
+    "    body{font:12px Menlo,monospace;margin:16px;background:#fff;color:#111;}"
+    "    ul{list-style:none;padding-left:14px;} summary{cursor:pointer;}"
+    "    summary:hover{background:#eee;}</style></head><body>"
+    "    <p><b>vimb DOM inspector</b> — <a href=\"#\" onclick=\"return false;\">back</a> (400-node cap)</p>"
+    "    '+html+'</body></html>';"
+    "})()";
+    [wv evaluateJavaScript:js completionHandler:^(id result, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (err || ![result isKindOfClass:[NSString class]]) {
+                [weakSelf showMessage:@"inspector failed to read the DOM" error:YES];
+                return;
+            }
+            [weakSelf openViewSourceTabWithHTML:(NSString *)result];
+        });
+    }];
 }
 
 - (NSString *)escapeHTML:(NSString *)s {
