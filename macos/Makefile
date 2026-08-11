@@ -36,6 +36,18 @@ SRCS := main.m \
         VimbHintEngine.m \
         VimbPermissionPolicy.m
 
+# ---------------------------------------------------------------------------
+# Parallel sub-agent workstreams (see ../PARALLEL-SUBAGENTS.md).
+# Each claimed stream drops `frags/<stream>.mk` that appends to STREAM_SRCS
+# (app target) and STREAM_TEST_SRCS (test target). Keeping these in the frags/
+# dir means concurrent workers never race on this shared Makefile.
+# ---------------------------------------------------------------------------
+STREAM_SRCS       :=
+STREAM_TEST_SRCS  :=
+-include frags/*.mk
+
+SRCS              += $(STREAM_SRCS)
+
 OBJS := $(SRCS:.m=.o)
 
 all: $(APP)
@@ -94,6 +106,9 @@ TEST_SRCS := \
         VimbEditor.m \
         VimbHintEngine.m \
         VimbPermissionPolicy.m
+
+# Merge in per-workstream test sources declared via frags/*.mk.
+TEST_SRCS += $(STREAM_TEST_SRCS)
 
 TEST_OBJS := $(patsubst %.m,tests/%.o,$(TEST_SRCS))
 TEST_BIN  := tests/vimb_tests
