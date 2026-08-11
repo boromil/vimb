@@ -2,6 +2,8 @@
 #import "VimbConfig.h"
 #import "VimbAutocmd.h"
 #import "VimbPermissionPolicy.h"
+#import "VimbContextMenu.h"
+#import "VimbEx.h"
 
 // This view is created programmatically only (no nibs/coders), so the
 // designated-initializer consistency warnings don't apply.
@@ -521,6 +523,166 @@ static NSString *const GVimJS =
 }
 
 #pragma mark - Actions
+
+#pragma mark - Context menu (parity with src/context-menu.c)
+
+// The WKWebView macOS web engine builds its default right-click menu internally;
+// there is no public macOS delegate hook for the WK context menu (the
+// UIContextMenu-based delegate methods in WKUIDelegate.h are marked iOS-only).
+// The reliable, documented way to customize it is to subclass WKWebView (we
+// already are KeyboardWebView) and override -willOpenMenu:withEvent: — the same
+// hook iTerm2 / iCab / the modern Safari-style engines use. After super builds
+// the default items we rewire the "open … in new window" family to open in tabs
+// (mirroring fix_open_in_new_window_stock_action) and append the vimb browser
+// actions (Home / Hint Links / View Source / Add Bookmark / Copy URL).
+- (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
+    // Let WKWebView build its default menu first (Back/Forward/Reload/Copy/
+    // Open Link/…). Those already route through the same selectors the main
+    // menu bar uses, so keep them; only the new-window items are replaced.
+    [super willOpenMenu:menu withEvent:event];
+
+    // Best-effort link detection: the default "Open Link"/"Copy Link" items
+    // carry the target URL in their representedObject (URL or string).
+    NSString *linkURL = [self linkURLFromDefaultItems:menu.itemArray];
+
+    NSArray<NSDictionary *> *tree = [VimbContextMenu menuTreeForContext:@{
+        @"link": linkURL ?: @"",   // empty string means "not over a link"
+        @"back": @(self.canGoBack),
+        @"forward": @(self.canGoForward),
+    }];
+
+    // Keep every default item except the "open … in new window" family, which
+    // becomes an "open in new tab" item (parity with fix_open_in_new_window_*).
+    NSMutableArray *replacement = [NSMutableArray array];
+    for (NSMenuItem *item in menu.itemArray) {
+        if ([VimbContextMenu isOpenInNewWindowIdentifier:item.identifier]) {
+            [replacement addObject:[self openInNewTabItemWithURLString:linkURL]];
+        } else {
+            [replacement addObject:item];
+        }
+    }
+
+    // Append the vimb browser actions, skipping any that the engine already
+    // provides (Back/Forward/Reload/Copy, which map to the menu-bar selectors).
+    [replacement addObjectsFromArray:[self vimbActionItemsFromTree:tree linkURL:linkURL]];
+
+    [menu removeAllItems];
+    for (NSMenuItem *item in replacement) { [menu addItem:item]; }
+}
+
+// Recovers the link URL from the WK default menu items. nil means no link.
+- (nullable NSString *)linkURLFromDefaultItems:(NSArray<NSMenuItem *> *)items {
+    for (NSMenuItem *item in items) {
+        id rep = item.representedObject;
+        NSString *candidate = nil;
+        if ([rep isKindOfClass:[NSURL class]]) {
+            candidate = [(NSURL *)rep absoluteString];
+        } else if ([rep isKindOfClass:[NSString class]] && [(NSString *)rep length]) {
+            candidate = rep;
+        }
+        if (candidate.length) { return candidate; }
+    }
+    return nil;
+}
+
+// Builds an "Open in New Tab" item wired to -openLinkInNewTab:.
+- (NSMenuItem *)openInNewTabItemWithURLString:(nullable NSString *)url {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"Open Link in New Tab"
+                                                  action:@selector(openLinkInNewTab:)
+                                           keyEquivalent:@""];
+    item.target = self;
+    item.representedObject = @{ @"action": @"openLinkNewTab", @"url": url ?: @"" };
+    return item;
+}
+
+// Translates the Foundation-only tree descriptors into NSMenuItems. Items that
+// the engine already provides (Back/Forward/Reload) are skipped so they are not
+// duplicated; the detected link URL is attached to the link actions.
+- (NSArray<NSMenuItem *> *)vimbActionItemsFromTree:(NSArray<NSDictionary *> *)tree
+                                           linkURL:(nullable NSString *)linkURL {
+    static NSSet<NSString *> *engineProvided = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        // back/forward/reload are in the WK default menu; when a link is present
+        // WK also provides Copy Link and an open-item that willOpenMenu converts
+        // into "Open Link in New Tab" — so these are not duplicated here.
+        engineProvided = [NSSet setWithArray:@[
+            @"back", @"forward", @"reload", @"openLinkNewTab", @"copyLink"
+        ]];
+    });
+    NSMutableArray *items = [NSMutableArray array];
+    for (NSDictionary *node in tree) {
+        if ([node[@"type"] isEqualToString:@"separator"]) {
+            if (items.count) { [items addObject:[NSMenuItem separatorItem]]; }
+            continue;
+        }
+        NSString *action = node[@"action"];
+        if ([engineProvided containsObject:action]) { continue; }
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:node[@"title"]
+                                                      action:@selector(dispatchContextAction:)
+                                               keyEquivalent:@""];
+        item.target = self;
+        item.enabled = [node[@"enabled"] boolValue];
+        item.representedObject = @{ @"action": action, @"url": linkURL ?: @"" };
+        [items addObject:item];
+    }
+    // Drop a leading separator left over if the first real item was skipped.
+    if ([items.firstObject isSeparatorItem]) { [items removeObjectAtIndex:0]; }
+    if ([items.lastObject isSeparatorItem]) { [items removeLastObject]; }
+    return items;
+}
+
+- (void)openLinkInNewTab:(id)sender {
+    NSDictionary *payload = [(NSMenuItem *)sender representedObject];
+    NSString *url = payload[@"url"];
+    if (!url.length) { return; }
+    id<VimDelegate> d = [self vbVimDelegate];
+    if (d && [d respondsToSelector:@selector(vimOpenURL:inNewTab:)]) {
+        [d vimOpenURL:url inNewTab:YES];
+    }
+}
+
+// Shared handler for the vimb browser actions appended to the context menu.
+- (void)dispatchContextAction:(id)sender {
+    NSDictionary *payload = [(NSMenuItem *)sender representedObject];
+    NSString *action = payload[@"action"];
+    id<VimDelegate> d = [self vbVimDelegate];
+
+    if ([action isEqualToString:@"copyLink"]) {
+        [self copyString:payload[@"url"] ?: @""];
+    } else if ([action isEqualToString:@"copyPageURL"]) {
+        [self copyString:self.URL.absoluteString ?: @""];
+    } else if ([action isEqualToString:@"home"]) {
+        if ([d respondsToSelector:@selector(vimOpenHomePage:)]) { [d vimOpenHomePage:NO]; }
+    } else if ([action isEqualToString:@"hintLinks"]) {
+        [self toggleHints:@"o" gmode:NO];
+    } else if ([action isEqualToString:@"viewSource"]) {
+        if ([d respondsToSelector:@selector(vimViewSource)]) { [d vimViewSource]; }
+    } else if ([action isEqualToString:@"addBookmark"]) {
+        NSString *url = self.URL.absoluteString ?: @"";
+        NSString *title = self.title ?: @"";
+        // The vim delegate (BrowserWindowController) is also the VimbExActor
+        // that owns :bma; reuse its bookmark add so context-menu behaviour and
+        // the ex command stay identical.
+        id<VimbExActor> actor = (id<VimbExActor>)d;
+        if ([actor respondsToSelector:@selector(exBookmarkAdd:title:)]) {
+            [actor exBookmarkAdd:url title:title];
+        }
+    }
+}
+
+- (void)copyString:(NSString *)string {
+    if (!string.length) { return; }
+    [[NSPasteboard generalPasteboard] clearContents];
+    [[NSPasteboard generalPasteboard] setString:string forType:NSPasteboardTypeString];
+}
+
+// The vim delegate (the BrowserWindowController) through which browser actions
+// that live there are reached; mirrors how keyDown: reaches the controller.
+- (id<VimDelegate>)vbVimDelegate {
+    VimController *vim = [self.vbDelegate vimControllerForView:self];
+    return vim ? vim.delegate : nil;
+}
 
 #pragma mark - Hint mode
 
