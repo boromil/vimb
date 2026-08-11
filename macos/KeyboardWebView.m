@@ -123,9 +123,8 @@ static NSString *const GVimJS =
     if ([cfg getBool:@"webinspector" defaultValue:NO]) {
         [prefs setValue:@YES forKey:@"developerExtrasEnabled"];
     }
-    [prefs setValue:@([cfg getInt:@"font-size" defaultValue:16]) forKey:@"minimumFontSize"];
     [prefs setValue:@([cfg getInt:@"font-size" defaultValue:16]) forKey:@"defaultFontSize"];
-    [prefs setValue:@([cfg getInt:@"minimum-font-size" defaultValue:0]) forKey:@"minimumFontSize"];
+    prefs.minimumFontSize = (CGFloat)[cfg getInt:@"minimum-font-size" defaultValue:5];
 
     // Note: no KVC setValue: on WKPreferences for private keys here — setting
     // mediaPlaybackRequiresUserGesture/mediaPlaybackAllowsInline via KVC during
