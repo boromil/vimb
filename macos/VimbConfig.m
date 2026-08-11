@@ -6,9 +6,10 @@
 @end
 
 static const NSString *DOWNLOAD_COMMAND = @"/usr/bin/open %s";
-static const NSString *HINT_KEYS = @"abcdefghijklmnopqrstuvwxyz";
+static const NSString *HINT_KEYS = @"0123456789";   // vimb config.h SETTING_HINT_KEYS
 static const NSString *HOME_PAGE = @"about:blank";
-static const NSString *COOKIE_ACCEPT = @"ask";
+static const NSString *COOKIE_ACCEPT = @"always";   // vimb config.h SETTING_COOKIE_ACCEPT (+ allowed origin/never)
+static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTING_HISTIGNORE
 
 @implementation VimbConfig
 
@@ -91,7 +92,7 @@ static const NSString *COOKIE_ACCEPT = @"ask";
     [self addSetting:@"hint-follow-last" type:B value:@YES];
     [self addSetting:@"hint-keys-same-length" type:B value:@NO];
     [self addSetting:@"hint-match-element" type:B value:@YES];
-    [self addSetting:@"histignore" type:C value:@".*youtube\\..*"];
+    [self addSetting:@"histignore" type:C value:[HISTIGNORE copy]];
     [self addSetting:@"html5-database" type:B value:@YES];
     [self addSetting:@"html5-local-storage" type:B value:@YES];
     [self addSetting:@"images" type:B value:@YES];
@@ -118,7 +119,7 @@ static const NSString *COOKIE_ACCEPT = @"ask";
     [self addSetting:@"tabs-to-links" type:B value:@YES];
     [self addSetting:@"webaudio" type:B value:@NO];
     [self addSetting:@"webgl" type:B value:@NO];
-    [self addSetting:@"webinspector" type:B value:@NO];
+    [self addSetting:@"webinspector" type:B value:@YES];  // vimb config.h default &on (TRUE)
     [self addSetting:@"stylesheet" type:B value:@YES];
     [self addSetting:@"user-scripts" type:B value:@YES];
     [self addSetting:@"cookie-accept" type:C value:[COOKIE_ACCEPT copy]];

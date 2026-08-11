@@ -372,6 +372,8 @@ static const CGFloat kStatusHeight = 24.0;
 }
 
 - (void)recordHistory:(NSString *)url {
+    // GTK history_add: when history-max-items == 0, don't record at all.
+    if ([VimbConfig shared].historyMax == 0) { return; }
     if (![[VimbConfig shared] shouldRecordURL:url]) { return; }
     [[VimbConfig shared].historyStore prepend:url max:(NSUInteger)[VimbConfig shared].historyMax];
 }
@@ -1089,6 +1091,10 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)vimGoBack { [self goBack]; }
 - (void)vimGoForward { [self goForward]; }
 - (void)vimReload { [self reloadPage]; }
+- (void)vimReloadBypassCache {
+    // R: reload bypassing the HTTP cache (GTK webkit_web_view_reload_bypass_cache).
+    [self.activeTab.webView reloadFromOrigin:nil];
+}
 - (void)vimStop { [self.activeTab.webView stopLoading:nil]; }
 - (void)vimOpenURL:(NSString *)urlValue inNewTab:(BOOL)newTab { [self loadURL:urlValue inNewTab:newTab]; }
 - (void)vimOpenHome {

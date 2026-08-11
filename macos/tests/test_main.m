@@ -50,6 +50,7 @@ typedef NS_ENUM(NSInteger, ScrollMode) { ScrollModeNone = 0, ScrollModeScroll };
 - (void)vimGoBack {}
 - (void)vimGoForward {}
 - (void)vimReload {}
+- (void)vimReloadBypassCache {}
 - (void)vimStop {}
 - (void)vimOpenURL:(NSString *)urlValue inNewTab:(BOOL)newTab {}
 - (void)vimOpenHome {}

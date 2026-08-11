@@ -39,6 +39,7 @@ static NSString *S(unichar c) {
 - (void)vimGoBack { [self record:@"back"]; }
 - (void)vimGoForward { [self record:@"forward"]; }
 - (void)vimReload { [self record:@"reload"]; }
+- (void)vimReloadBypassCache { [self record:@"reloadbypass"]; }
 - (void)vimStop { [self record:@"stop"]; }
 - (void)vimOpenURL:(NSString *)urlValue inNewTab:(BOOL)newTab { [self record:[NSString stringWithFormat:@"open:%d:%@", newTab, urlValue]]; }
 - (void)vimOpenHome { [self record:@"home"]; }
@@ -849,10 +850,10 @@ static void test_controller_invoke_handlers(void) {
     BehavSpy *spy = newSpy();
     VimController *vc = newVc(spy);
 
-    // reload: ^C, ^R, 'r', 'R'
+    // reload: 'r' reload, 'R' reload bypassing cache (GTK reload/normal.c).
     [spy.calls removeAllObjects];
     feed(vc, @"r"); TEST_ASSERT_TRUE([spy.calls containsObject:@"reload"]);
-    feed(vc, @"R"); TEST_ASSERT_TRUE([spy.calls containsObject:@"reload"]);
+    feed(vc, @"R"); TEST_ASSERT_TRUE([spy.calls containsObject:@"reloadbypass"]);
 
     // back / forward
     [spy.calls removeAllObjects];
@@ -1224,9 +1225,9 @@ static void test_config_convert_ctrl_digit(void) {
 static void test_controller_control_key_variants(void) {
     BehavSpy *spy = newSpy();
     VimController *vc = newVc(spy);
-    // ^C (0x03) reload.
+    // ^C (0x03) stops loading (GTK normal_navigate -> webkit_web_view_stop_loading).
     [spy.calls removeAllObjects];
-    feed(vc, S(0x03)); TEST_ASSERT_TRUE([spy.calls containsObject:@"reload"]);
+    feed(vc, S(0x03)); TEST_ASSERT_TRUE([spy.calls containsObject:@"stop"]);
     // ^D (0x04), ^F (0x06), ^U (0x15) scroll.
     unichar ctrl[] = {0x04, 0x06, 0x15};
     for (int i = 0; i < 3; i++) {

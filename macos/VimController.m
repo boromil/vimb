@@ -405,7 +405,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     switch (key) {
         case 0x01: return @[@"inc"];         // ^A
         case 0x02: return @[@"scroll"];      // ^B
-        case 0x03: return @[@"reload"];      // ^C
+        case 0x03: return @[@"stop"];        // ^C stop_loading (GTK normal_navigate)
         case 0x04: return @[@"scroll"];      // ^D
         case 0x06: return @[@"scroll"];      // ^F
         case 0x09: return @[@"forward"];     // ^I  (next from history handled as forward)
@@ -432,7 +432,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         case 'O': case 'o': case 'T': case 't':
                         return @[@"inputopen"];
         case 'P': case 'p': return @[@"openclipboard"];
-        case 'R': case 'r': return @[@"reload"];
+        case 'R': return @[@"reloadbypass"];  // R reload_bypass_cache (GTK normal_navigate)
+        case 'r': return @[@"reload"];        // r reload
         case 'U': case 'u': return @[@"home"];
         case 'Y': case 'y': return @[@"yank"];
         case '[': case ']': return @[@"prevnext"];
@@ -458,6 +459,10 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     }
     if ([name isEqualToString:@"reload"]) {
         [d vimReload];
+        return HBResultComplete;
+    }
+    if ([name isEqualToString:@"reloadbypass"]) {
+        [d vimReloadBypassCache];
         return HBResultComplete;
     }
     if ([name isEqualToString:@"back"]) { [d vimGoBack]; return HBResultComplete; }

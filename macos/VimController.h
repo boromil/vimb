@@ -20,6 +20,7 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimGoBack;
 - (void)vimGoForward;
 - (void)vimReload;
+- (void)vimReloadBypassCache;   // 'R': reload without using the cache (GTK reload_bypass_cache)
 - (void)vimStop;
 - (void)vimOpenURL:(nullable NSString *)urlValue inNewTab:(BOOL)newTab;
 - (void)vimOpenHome;                       // 'U'/'u' reopen last closed page
