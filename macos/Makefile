@@ -27,6 +27,7 @@ SRCS := main.m \
         VimbStorage.m \
         VimbConfig.m \
         VimbEx.m \
+        VimbExParser.m \
         VimbMenu.m \
         VimbAutocmd.m \
         VimbCommandField.m \
@@ -35,6 +36,7 @@ SRCS := main.m \
         VimbEditor.m \
         VimbHintEngine.m \
         VimbPermissionPolicy.m \
+        VimbPath.m \
         VimbWindowPolicy.m
 
 # ---------------------------------------------------------------------------
@@ -101,12 +103,14 @@ TEST_SRCS := \
         VimbStorage.m \
         VimbConfig.m \
         VimbEx.m \
+        VimbExParser.m \
         VimbAutocmd.m \
         VimController.m \
         VimbHandler.m \
         VimbEditor.m \
         VimbHintEngine.m \
         VimbPermissionPolicy.m \
+        VimbPath.m \
         VimbWindowPolicy.m
 
 # Merge in per-workstream test sources declared via frags/*.mk.

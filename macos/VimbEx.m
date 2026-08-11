@@ -1,86 +1,55 @@
 #import "VimbEx.h"
+#import "VimbExParser.h"
 #import "VimbConfig.h"
 #import "VimbAutocmd.h"
 
-// Command descriptor mirroring ex.c's ExInfo table.
-typedef NS_ENUM(NSInteger, ExCmd) {
-    ExOpen, ExSet, ExQuit, ExQuitAll, ExReload, ExStop, ExTabcmd,
-    ExEval, ExSave, ExRegister, ExAutocmd, ExMap, ExUnmap, ExSource,
-    ExMessage, ExShortcut, ExBookmark
-};
-
-@implementation VimbEx {
-    NSArray<NSArray<NSString *> *> *_table; // [name, type, ...]
+// Maps a resolved (canonical, unabbreviated) command name to the macos-side
+// dispatch type. Source of truth for dispatch is the GTK ex.c commands table
+// (which VimbExParser resolves), so aliases/abbreviations need not be listed.
+// "bookmarks" is a macos-port addition (opens the bookmark browser panel).
+static NSString *TypeForName(NSString *name) {
+    static NSDictionary<NSString *, NSString *> *map = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        map = @{
+            @"autocmd": @"autocmd", @"augroup": @"autocmd",
+            @"bma": @"bookmark", @"bmr": @"bookmark",
+            @"bookmarks": @"bookmarks",
+            @"cmap": @"map", @"cnoremap": @"map", @"cunmap": @"unmap",
+            @"cleardata": @"cleardata",
+            @"hardcopy": @"hardcopy",
+            @"handler-add": @"handler", @"handler-remove": @"handler",
+            @"eval": @"eval",
+            @"imap": @"map", @"inoremap": @"map", @"iunmap": @"unmap",
+            @"nmap": @"map", @"nnoremap": @"map", @"nunmap": @"unmap",
+            @"normal": @"normal",
+            @"open": @"open",
+            @"quit": @"quit", @"quitall": @"quitall",
+            @"qunshift": @"queue", @"qclear": @"queue", @"qpop": @"queue", @"qpush": @"queue",
+            @"register": @"register",
+            @"save": @"save",
+            @"set": @"set",
+            @"shellcmd": @"shell", @"shellex": @"shell",
+            @"shortcut-add": @"shortcut", @"shortcut-default": @"shortcut", @"shortcut-remove": @"shortcut",
+            @"source": @"source",
+            @"tabopen": @"open",
+            @"tabclose": @"tabcmd", @"tabnext": @"tabcmd", @"tabprev": @"tabcmd",
+            @"tabprevious": @"tabcmd", @"tabfirst": @"tabcmd", @"tablast": @"tabcmd",
+        };
+    });
+    return map[name];
 }
 
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        _table = @[
-            @[@"autocmd", @"autocmd"],
-            @[@"augroup", @"autocmd"],
-            @[@"bma", @"bookmark"],
-            @[@"bmr", @"bookmark"],
-            @[@"bookmarks", @"bookmarks"],
-            @[@"cmap", @"map"], @[@"cnoremap", @"map"], @[@"cunmap", @"unmap"],
-            @[@"cleardata", @"cleardata"],
-            @[@"hardcopy", @"hardcopy"],
-            @[@"handler-add", @"handler"], @[@"handler-remove", @"handler"],
-            @[@"eval", @"eval"],
-            @[@"imap", @"map"], @[@"inoremap", @"map"], @[@"iunmap", @"unmap"],
-            @[@"nmap", @"map"], @[@"nnoremap", @"map"], @[@"nunmap", @"unmap"],
-            @[@"normal", @"normal"],
-            @[@"open", @"open"],
-            @[@"quit", @"quit"], @[@"quitall", @"quitall"],
-            @[@"qunshift", @"queue"], @[@"qclear", @"queue"], @[@"qpop", @"queue"], @[@"qpush", @"queue"],
-            @[@"register", @"register"],
-            @[@"save", @"save"],
-            @[@"set", @"set"],
-            @[@"shellcmd", @"shell"], @[@"shellex", @"shell"],
-            @[@"shortcut-add", @"shortcut"], @[@"shortcut-default", @"shortcut"], @[@"shortcut-remove", @"shortcut"],
-            @[@"source", @"source"],
-            @[@"tabopen", @"open"],
-            @[@"tabclose", @"tabcmd"], @[@"tabnext", @"tabcmd"], @[@"tabprev", @"tabcmd"],
-            @[@"tabprevious", @"tabcmd"], @[@"tabfirst", @"tabcmd"], @[@"tablast", @"tabcmd"],
-            // Short aliases that resolve exactly as GTK4's first-prefix abbreviation
-            // (kept for clarity; no extra commands are invented beyond ex.c).
-            @[@"o", @"open"],
-            @[@"tabn", @"tabcmd"], @[@"tabp", @"tabcmd"],
-        ];
-    }
-    return self;
-}
+@implementation VimbEx
 
 - (NSArray<NSString *> *)commandNames {
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (NSArray<NSString *> *r in _table) {
-        NSString *name = r[0];
-        if (![names containsObject:name]) { [names addObject:name]; }
-    }
-    return names;
+    return [VimbExParser commandNames];
 }
 
-// Matches a possibly-abbreviated command name against the table, mirroring
-// ex.c parse_command_name: the FIRST table command whose name has the typed
-// string as a prefix is selected (so ambiguous abbreviations resolve to the
-// first-defined command, e.g. ":q" -> quit, ":t" -> tabopen). Returns nil
-// when no command matches.
-- (NSString *)matchCommand:(NSString *)name {
-    if (name.length == 0) { return nil; }
-    // De-duplicate aliases: prefer the longest/first full name so an exact
-    // command still resolves (e.g. "open" -> open, not the "o" alias).
-    NSString *result = nil;
-    for (NSArray<NSString *> *r in _table) {
-        NSString *cmd = r[0];
-        if (cmd.length >= name.length && [cmd hasPrefix:name] && cmd.length >= name.length) {
-            if (result == nil || cmd.length == name.length || result.length < cmd.length) {
-                // Prefer an exact-length match, else first in table order.
-                if (cmd.length == name.length) { return cmd; }
-                if (result == nil) { result = cmd; }
-            }
-        }
-    }
-    return result;
+// Matches a possibly-abbreviated command name against ex.c's commands table
+// (first-prefix-wins, exact names win). Delegates to the shared parser.
+- (nullable NSString *)matchCommand:(NSString *)name {
+    return [VimbExParser matchCommandForName:name];
 }
 
 - (NSString *)expandToken:(NSString *)token {
@@ -92,32 +61,23 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     if (!a) { return NO; }
 
     NSString *cmdLine = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    BOOL bang = NO;
+    if (cmdLine.length == 0) { return NO; }
 
-    // Split command name from args (supports quoted arguments via spaces).
-    NSArray<NSString *> *tokens = [self tokenize:cmdLine];
-    if (tokens.count == 0) { return NO; }
-    NSString *name = tokens[0];
-    // GTK parses a post-command bang (e.g. :quit! / :eval! / :normal! gg /
-    // :shellcmd! ls) for commands that declare EX_FLAG_BANG. Strip it from the
-    // command name the way parse_bang() consumes it after the name.
-    if (name.length > 1 && [name hasSuffix:@"!"]) {
-        NSMutableArray<NSString *> *mutable = [tokens mutableCopy];
-        NSString *stripped = [name substringToIndex:name.length - 1];
-        if (stripped.length) {
-            mutable[0] = stripped;
-        } else {
-            [mutable removeObjectAtIndex:0];
-        }
-        tokens = mutable;
-        name = stripped;
-        bang = YES;
-    }
-    NSRange argRange = NSMakeRange(1, tokens.count - 1);
-    NSString *arg = [[tokens subarrayWithRange:argRange] componentsJoinedByString:@" "];
-
-    NSString *full = [self matchCommand:name];
+    // Parse the line with the shared ex.c-faithful parser (name resolution,
+    // bang, count, lhs/rhs). The raw remainder is kept for dispatch branches
+    // written against GTK's combined "everything after the name" convention.
+    VimbExArg *parsed = [VimbExParser parseLine:cmdLine];
+    NSString *full = parsed.command;
     if (!full) {
+        // macOS-port addition: ":bookmarks" opens the bookmark browser panel.
+        // Not present in ex.c's table, so handle it here before the fallback.
+        NSString *firstToken = [self firstToken:cmdLine];
+        if ([firstToken isEqualToString:@"bookmarks"]) {
+            if ([a respondsToSelector:@selector(exShowBookmarks)]) {
+                [a exShowBookmarks];
+            }
+            return NO;
+        }
         // Not a recognized ex command: treat the whole line as a URL/query to
         // open (vim b) — this makes ":open foo", bare ":" URLs and prefilled
         // command lines behave consistently.
@@ -126,16 +86,17 @@ typedef NS_ENUM(NSInteger, ExCmd) {
             && ![cmdLine containsString:@"."]) {
             // Still ambiguous-ly not a URL (a single bare token with no dot or
             // slash); could be a typo'd command.
-            [a exMessage:[NSString stringWithFormat:@"Invalid command: %@", name] error:YES];
+            [a exMessage:[NSString stringWithFormat:@"Invalid command: %@", firstToken] error:YES];
             return NO;
         }
         [a exOpen:cmdLine newTab:NO];
         return NO;
     }
-    (void)bang;
 
-    NSString *type = nil;
-    for (NSArray<NSString *> *r in _table) { if ([r[0] isEqualToString:full]) { type = r[1]; break; } }
+    BOOL bang = parsed.bang;
+    NSString *arg = parsed.rest ?: @"";
+
+    NSString *type = TypeForName(full);
 
     if ([type isEqualToString:@"open"]) {
         BOOL newTab = [full isEqualToString:@"tabopen"];
@@ -245,6 +206,23 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     }
     if (cur.length) { [tokens addObject:[cur copy]]; }
     return tokens;
+}
+
+// First whitespace-delimited token of a raw command line (for error messages
+// and the macos ":bookmarks" special case before parser resolution).
+- (NSString *)firstToken:(NSString *)line {
+    NSUInteger start = 0;
+    while (start < line.length && [[NSCharacterSet whitespaceCharacterSet]
+        characterIsMember:[line characterAtIndex:start]]) {
+        start++;
+    }
+    NSUInteger end = start;
+    while (end < line.length && ![[NSCharacterSet whitespaceCharacterSet]
+        characterIsMember:[line characterAtIndex:end]]) {
+        end++;
+    }
+    if (end <= start) { return @""; }
+    return [line substringWithRange:NSMakeRange(start, end - start)];
 }
 
 - (void)handleTabcmd:(NSString *)full arg:(NSString *)arg actor:(id<VimbExActor>)a {

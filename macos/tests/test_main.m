@@ -14,8 +14,10 @@
 #import "VimbStorage.h"
 #import "VimbConfig.h"
 #import "VimbEx.h"
+#import "VimbExParser.h"
 #import "VimbEngine.h"
 #import "VimbAutocmd.h"
+#import "VimbPath.h"
 
 typedef NS_ENUM(NSInteger, ScrollMode) { ScrollModeNone = 0, ScrollModeScroll };
 
@@ -396,6 +398,85 @@ static void test_ex_url_fallback(void) {
     TEST_ASSERT_EQ_STR(a.opened[0], @"example.com");
 }
 
+// Direct structural test of the shared ex.c-faithful parser: resolves a name
+// and separates lhs/rhs/bang/count/rest exactly as ex.c's ExArg would.
+static void test_ex_parser_arg(void) {
+    // Plain command, rhs preserved.
+    VimbExArg *a = [VimbExParser parseLine:@"open https://x.com/path"];
+    TEST_ASSERT_EQ_STR(a.command, @"open");
+    TEST_ASSERT_EQ_STR(a.rest, @"https://x.com/path");
+    TEST_ASSERT_EQ_STR(a.rhs, @"https://x.com/path");
+    TEST_ASSERT_TRUE(a.lhs == nil);
+    TEST_ASSERT_EQ_I(a.count, 0);
+    TEST_ASSERT_TRUE(!a.bang);
+    TEST_ASSERT_TRUE(!a.unknownCommand);
+
+    // Leading ':' is consumed; abbreviation resolves (t -> tabopen).
+    VimbExArg *t = [VimbExParser parseLine:@":t foo"];
+    TEST_ASSERT_EQ_STR(t.command, @"tabopen");
+    TEST_ASSERT_EQ_STR(t.rest, @"foo");
+
+    // Count (":2tabnext") -> count=2, name resolves.
+    VimbExArg *n = [VimbExParser parseLine:@":2tabnext"];
+    TEST_ASSERT_EQ_STR(n.command, @"tabnext");
+    TEST_ASSERT_EQ_I(n.count, 2);
+
+    // Bang after a EX_FLAG_BANG command.
+    VimbExArg *q = [VimbExParser parseLine:@"quit!"];
+    TEST_ASSERT_EQ_STR(q.command, @"quit");
+    TEST_ASSERT_TRUE(q.bang);
+
+    // bang + rhs for :normal! gg.
+    VimbExArg *ng = [VimbExParser parseLine:@"normal! gg"];
+    TEST_ASSERT_EQ_STR(ng.command, @"normal");
+    TEST_ASSERT_TRUE(ng.bang);
+    TEST_ASSERT_EQ_STR(ng.rest, @"gg");
+    TEST_ASSERT_EQ_STR(ng.rhs, @"gg");
+
+    // LHS+CMD map: cmap <C-T> :tabopen<CR> -> lhs "C-T", rhs after.
+    VimbExArg *m = [VimbExParser parseLine:@"cmap <C-T> :tabopen"];
+    TEST_ASSERT_EQ_STR(m.command, @"cmap");
+    TEST_ASSERT_EQ_STR(m.lhs, @"<C-T>");
+    TEST_ASSERT_EQ_STR(m.rhs, @":tabopen");
+
+    // LHS with escaped space stays part of the single word.
+    VimbExArg *e = [VimbExParser parseLine:@"augroup foo\\ bar"];
+    TEST_ASSERT_EQ_STR(e.command, @"augroup");
+    TEST_ASSERT_EQ_STR(e.lhs, @"foo bar");
+
+    // RHS list ends at |; CMD rhs keeps it.
+    VimbExArg *p = [VimbExParser parseLine:@"set scroll-relax-until|z"];
+    TEST_ASSERT_EQ_STR(p.command, @"set");
+    TEST_ASSERT_EQ_STR(p.rhs, @"scroll-relax-until");
+
+    // Unknown command -> unknownCommand, command nil.
+    VimbExArg *u = [VimbExParser parseLine:@"bdelete foo"];
+    TEST_ASSERT_TRUE(u.unknownCommand);
+    TEST_ASSERT_TRUE(u.command == nil);
+}
+
+// First-prefix-wins resolution rules (ex.c parse_command_name).
+static void test_ex_parser_abbreviation(void) {
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"q"], @"quit");
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"t"], @"tabopen");
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"o"], @"open");
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"r"], @"register");
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"tabn"], @"tabnext");
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"tabp"], @"tabprev");
+    // Exact names resolve to themselves.
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"quitall"], @"quitall");
+    TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"register"], @"register");
+    // Non-commands / empty -> nil.
+    TEST_ASSERT_TRUE([VimbExParser matchCommandForName:@"reload"] == nil);
+    TEST_ASSERT_TRUE([VimbExParser matchCommandForName:@"bd"] == nil);
+    TEST_ASSERT_TRUE([VimbExParser matchCommandForName:@"bdelete"] == nil);
+    TEST_ASSERT_TRUE([VimbExParser matchCommandForName:@""] == nil);
+    TEST_ASSERT_TRUE([VimbExParser matchCommandForName:@"zzz"] == nil);
+    // commandNames lists every table entry.
+    NSUInteger names = [[VimbExParser commandNames] count];
+    TEST_ASSERT_TRUE(names >= 40);
+}
+
 static void test_ex_shortcut_and_bang(void) {
     VimbEx *ex = [[VimbEx alloc] init];
     SpyExActor *a = [[SpyExActor alloc] init];
@@ -406,6 +487,41 @@ static void test_ex_shortcut_and_bang(void) {
     [ex runCommand:@"!open http://x.com"];
     TEST_ASSERT_EQ_I(a.opened.count, 1);
     TEST_ASSERT_EQ_STR(a.opened[0], @"!open http://x.com");
+}
+
+static void test_path_unique_destination(void) {
+    // Non-existent path is returned unchanged.
+    NSString *dir = NSTemporaryDirectory();
+    NSString *fresh1 = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"vbpath_%d_a.txt", (int)arc4random()]];
+    TEST_ASSERT_EQ_STR([VimbPath uniqueDestinationForPath:fresh1], fresh1);
+
+    // Existing base => append _N before the extension.
+    NSString *exists = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"vbpath_%d_b.txt", (int)arc4random()]];
+    [[NSData data] writeToFile:exists atomically:YES];
+    NSString *one = [VimbPath uniqueDestinationForPath:exists];
+    NSString *expectedOne = [dir stringByAppendingPathComponent:
+        [[exists lastPathComponent] stringByReplacingOccurrencesOfString:@".txt" withString:@"_1.txt"]];
+    TEST_ASSERT_EQ_STR(one, expectedOne);
+
+    // Both exist => _N climbs until a free name (checks monotonic suffixing).
+    [[NSData data] writeToFile:one atomically:YES];
+    NSString *two = [VimbPath uniqueDestinationForPath:exists];
+    TEST_ASSERT_TRUE([two hasSuffix:@"_2.txt"]);
+    TEST_ASSERT_TRUE(![[NSFileManager defaultManager] fileExistsAtPath:two]);
+
+    // No dot in the name => suffix appended (no extension to insert before).
+    NSString *noDot = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"vbpath_%d_plain", (int)arc4random()]];
+    [[NSData data] writeToFile:noDot atomically:YES];
+    TEST_ASSERT_TRUE([[VimbPath uniqueDestinationForPath:noDot] hasSuffix:@"_plain_1"]);
+
+    // `.tar.` two-dot extension: insert before ".tar.", i.e. x_1.tar.gz.
+    NSString *tar = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"vbpath_%d_arch.tar.gz", (int)arc4random()]];
+    [[NSData data] writeToFile:tar atomically:YES];
+    NSString *tarU = [VimbPath uniqueDestinationForPath:tar];
+    TEST_ASSERT_TRUE([[tarU lastPathComponent] hasPrefix:@"vbpath_"] && [tarU hasSuffix:@"_1.tar.gz"]);
+
+    // Empty string returns empty.
+    TEST_ASSERT_EQ_STR([VimbPath uniqueDestinationForPath:@""], @"");
 }
 
 #pragma mark - VimbEngine
@@ -663,6 +779,9 @@ int main(void) {
     RUN_TEST(test_ex_commands_and_names);
     RUN_TEST(test_ex_url_fallback);
     RUN_TEST(test_ex_shortcut_and_bang);
+    RUN_TEST(test_ex_parser_arg);
+    RUN_TEST(test_ex_parser_abbreviation);
+    RUN_TEST(test_path_unique_destination);
     RUN_TEST(test_engine_registers_marks);
     RUN_TEST(test_engine_vsetting);
     RUN_TEST(test_autocmd_register_and_fire);

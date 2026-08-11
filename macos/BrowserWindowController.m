@@ -1,4 +1,5 @@
 #import "BrowserWindowController.h"
+#import "VimbPath.h"
 #import "KeyboardWebView.h"
 #import "TabView.h"
 #import "VimbEx.h"
@@ -675,34 +676,9 @@ static const CGFloat kStatusHeight = 24.0;
 // Returns a destination path that does not yet exist, inserting `_N` before
 // the file extension (port of src/main.c's filename uniquification: `.tar.`
 // counts as a two-dot extension). When the base name has no dot, appends `_N`.
+// Pure path logic lives in VimbPath so it is unit-testable.
 - (NSString *)uniqueDestinationForPath:(NSString *)path {
-    if (path.length == 0) { return path; }
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:path]) { return path; }
-    NSString *base = [path stringByDeletingLastPathComponent];
-    NSString *name = [path lastPathComponent];
-    NSString *stem = name;
-    NSString *tail = @"";   // trailing ".ext"
-    NSRange tar = [name rangeOfString:@".tar."];
-    if (tar.location != NSNotFound) {
-        // "name.tar.gz" -> insert before ".tar."
-        stem = [name substringToIndex:tar.location];
-        tail = [name substringFromIndex:tar.location];
-    } else {
-        NSRange dot = [name rangeOfString:@"." options:NSBackwardsSearch];
-        if (dot.location != NSNotFound && dot.location > 0) {
-            stem = [name substringToIndex:dot.location];
-            tail = [name substringFromIndex:dot.location];
-        }
-    }
-    NSUInteger i = 1;
-    NSString *candidate;
-    do {
-        candidate = [base stringByAppendingPathComponent:
-                        [NSString stringWithFormat:@"%@_%lu%@", stem, (unsigned long)i, tail]];
-        i++;
-    } while ([fm fileExistsAtPath:candidate]);
-    return candidate;
+    return [VimbPath uniqueDestinationForPath:path];
 }
 
 - (void)exRegisterList {
