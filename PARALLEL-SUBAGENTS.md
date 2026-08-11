@@ -69,7 +69,7 @@ Legend: `[open]` = claimable, `[claimed]` = in progress by an agent, `[done]` =
 merged, `[blocked]` = cannot proceed (dependency), `[n/a]` = not portable /
 WKWebView ceiling.
 
-### WS-1  Completion dropdown (`completion.c` parity) — `[open]`
+### WS-1  Completion dropdown (`completion.c` parity) — `[claimed]`
 - **Goal:** replace the current tab-cycle completion in `BrowserWindowController`
   with a native dropdown that lists candidates (URLs, commands, settings,
   hints) as the user types, using the existing `completion-cycle` candidates.
@@ -84,7 +84,7 @@ WKWebView ceiling.
   candidate-generation logic (score/rank/filter) in a Foundation-only class you
   DO test.
 
-### WS-2  Context menu (`context-menu.c` parity) — `[open]`
+### WS-2  Context menu (`context-menu.c` parity) — `[claimed]`
 - **Goal:** wire `NSMenu` on right-click in `KeyboardWebView` so the vimb
   browser actions (back/forward/reload, copy-link/URL, open-in-tab/window, hint
   shortcuts) are reachable via right-click, matching what `context-menu.c`
@@ -99,7 +99,7 @@ WKWebView ceiling.
 - **Reference:** `src/context-menu.c`.
 - **Memory tag:** `context_menu`.
 
-### WS-3  Editor async read-back (`editor-command` polish) — `[open]`
+### WS-3  Editor async read-back (`editor-command` polish) — `[claimed]`
 - **Goal:** make the external-editor flow work with async editors (the
   `open -t`/TextEdit default) by polling/watching the temp file so edits come
   back; keep blocking editors (vim/\$EDITOR) working. Add a bounded wait so it
@@ -110,7 +110,7 @@ WKWebView ceiling.
 - **Reference:** `src/main.c ex_open` + `input.c`.
 - **Memory tag:** `editor`.
 
-### WS-4  Bookmarks browser UI (`bookmark.c` polish) — `[open]`
+### WS-4  Bookmarks browser UI (`bookmark.c` polish) — `[claimed]`
 - **Goal:** add a keyboard-reachable bookmark browser (list + filter + open +
   delete) beyond the existing `:bma`/`:bmr` commands, mirroring the gB-style
   flow used in upstream Linux vimb.
@@ -142,10 +142,10 @@ commit order and does the serial Makefile-fragment includes.
 
 | ID | Stream             | Files owned                      | Status        |
 |----|--------------------|----------------------------------|---------------|
-| 1  | Completion dropdown| CompletionDropdown.*, frag ws1   | `[open]`      |
-| 2  | Context menu       | VimbContextMenu.*, frag ws2      | `[open]`      |
-| 3  | Editor read-back   | VimbEditor.*, frag ws3           | `[open]`      |
-| 4  | Bookmarks UI       | VimbBookmark*.*, frag ws4        | `[open]`      |
+| 1  | Completion dropdown| CompletionDropdown.*, frag ws1   | `[claimed]`    |
+| 2  | Context menu       | VimbContextMenu.*, frag ws2      | `[claimed]`    |
+| 3  | Editor read-back   | VimbEditor.*, frag ws3           | `[claimed]`    |
+| 4  | Bookmarks UI       | VimbBookmark*.*, frag ws4        | `[claimed]`    |
 | 5  | Notification perm  | — (not portable)                 | `[n/a]`       |
 | 6  | Non-public settings| — (not portable)                 | `[n/a]`       |
 
