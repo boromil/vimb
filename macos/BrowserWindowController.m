@@ -490,11 +490,12 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)exReload { [self reloadPage]; }
 - (void)exStop { [self.activeTab.webView stopLoading:nil]; }
 - (void)exHome { [self vimOpenHome]; }
-- (void)exQuit { [self.window close]; }
-- (void)exQuitAll { [NSApp terminate:nil]; }
-- (void)exEval:(NSString *)js {
+- (void)exQuit:(BOOL)bang { (void)bang; [self.window close]; }
+- (void)exQuitAll:(BOOL)bang { (void)bang; [NSApp terminate:nil]; }
+- (void)exEval:(NSString *)js suppressOutput:(BOOL)suppress {
     __weak typeof(self) weakSelf = self;
     [self.activeTab.webView evaluateJavaScript:js completionHandler:^(id result, NSError *error) {
+        if (suppress) { return; }   // :eval! — don't print the result
         if (error) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [weakSelf showMessage:[@"eval error: " stringByAppendingString:error.localizedDescription] error:YES];
@@ -517,10 +518,22 @@ static const CGFloat kStatusHeight = 24.0;
         });
     }];
 }
-- (void)exShell:(NSString *)arg {
+- (void)exShell:(NSString *)arg async:(BOOL)async {
     NSString *trimmed = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (trimmed.length == 0) {
         [self showMessage:@"shell: empty command" error:YES];
+        return;
+    }
+    if (async) {
+        // :shellcmd! — fire-and-forget async spawn (GTK g_spawn_command_line_async).
+        NSTask *task = [[NSTask alloc] init];
+        task.executableURL = [NSURL fileURLWithPath:@"/bin/sh"];
+        task.arguments = @[ @"-c", trimmed ];
+        @try {
+            [task launch];
+        } @catch (NSException *e) {
+            [self showMessage:[@"shell: " stringByAppendingString:e.reason] error:YES];
+        }
         return;
     }
     NSTask *task = [[NSTask alloc] init];
@@ -650,12 +663,48 @@ static const CGFloat kStatusHeight = 24.0;
                 return;
             }
             NSError *werr = nil;
-            [data writeToFile:dest options:NSDataWritingAtomic error:&werr];
+            // Never overwrite an existing file: insert a `_N` suffix before the
+            // extension (exact port of src/main.c's filename uniquification).
+            NSString *unique = [weakSelf uniqueDestinationForPath:dest];
+            [data writeToFile:unique options:NSDataWritingAtomic error:&werr];
             if (werr) { [weakSelf showMessage:[@"save failed: " stringByAppendingString:werr.localizedDescription] error:YES]; }
-            else { [weakSelf showMessage:[@"saved to " stringByAppendingString:dest] error:NO]; }
+            else { [weakSelf showMessage:[@"saved to " stringByAppendingString:unique] error:NO]; }
         });
     }] resume];
 }
+// Returns a destination path that does not yet exist, inserting `_N` before
+// the file extension (port of src/main.c's filename uniquification: `.tar.`
+// counts as a two-dot extension). When the base name has no dot, appends `_N`.
+- (NSString *)uniqueDestinationForPath:(NSString *)path {
+    if (path.length == 0) { return path; }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:path]) { return path; }
+    NSString *base = [path stringByDeletingLastPathComponent];
+    NSString *name = [path lastPathComponent];
+    NSString *stem = name;
+    NSString *tail = @"";   // trailing ".ext"
+    NSRange tar = [name rangeOfString:@".tar."];
+    if (tar.location != NSNotFound) {
+        // "name.tar.gz" -> insert before ".tar."
+        stem = [name substringToIndex:tar.location];
+        tail = [name substringFromIndex:tar.location];
+    } else {
+        NSRange dot = [name rangeOfString:@"." options:NSBackwardsSearch];
+        if (dot.location != NSNotFound && dot.location > 0) {
+            stem = [name substringToIndex:dot.location];
+            tail = [name substringFromIndex:dot.location];
+        }
+    }
+    NSUInteger i = 1;
+    NSString *candidate;
+    do {
+        candidate = [base stringByAppendingPathComponent:
+                        [NSString stringWithFormat:@"%@_%lu%@", stem, (unsigned long)i, tail]];
+        i++;
+    } while ([fm fileExistsAtPath:candidate]);
+    return candidate;
+}
+
 - (void)exRegisterList {
     NSMutableString *str = [NSMutableString stringWithString:@"-- Register --"];
     NSString *dquote = [self.registers get:'"'];
@@ -736,13 +785,36 @@ static const CGFloat kStatusHeight = 24.0;
     [self showMessage:[NSString stringWithFormat:@"added bookmark %@", url] error:NO];
 }
 
-- (void)exBookmarkRemove:(NSString *)match {
+- (void)exBookmarkCurrent:(NSString *)tags {
+    // GTK :bma — always bookmarks the CURRENT page; the arg is tags only.
+    NSString *uri = self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString;
+    if (!uri.length || [uri isEqualToString:@"about:blank"]) {
+        [self showMessage:@"nothing to bookmark" error:YES];
+        return;
+    }
+    NSString *title = self.activeTab.title.length ? self.activeTab.title : uri;
+    NSString *line = uri;
+    if (title.length) { line = [NSString stringWithFormat:@"%@ %@", uri, title]; }
+    if (tags.length) { line = [line stringByAppendingFormat:@" %@", tags]; }
+    [[VimbConfig shared].bookmarkStore prepend:line max:0];
+    [self showMessage:[NSString stringWithFormat:@"added bookmark %@", uri] error:NO];
+}
+
+- (void)exUnbookmark:(NSString *)match {
+    // GTK :bmr — exact strcmp on the URI; no arg removes the current page.
     NSString *target = match;
+    if (!target.length) {
+        target = self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString;
+    }
+    if (!target.length) {
+        [self showMessage:@"nothing to unbookmark" error:YES];
+        return;
+    }
     NSMutableArray<NSString *> *remaining = [NSMutableArray array];
     BOOL removed = NO;
     for (NSString *line in [[VimbConfig shared].bookmarkStore lines]) {
         NSString *url = [line componentsSeparatedByString:@" "].firstObject;
-        if ([url hasPrefix:target]) { removed = YES; continue; }
+        if ([url isEqualToString:target]) { removed = YES; continue; }  // exact match
         [remaining addObject:line];
     }
     if (!removed) {
@@ -750,6 +822,34 @@ static const CGFloat kStatusHeight = 24.0;
     }
     [[VimbConfig shared].bookmarkStore writeAll:remaining];
     [self showMessage:removed ? @"bookmark removed" : @"no bookmark removed" error:!removed];
+}
+
+- (void)exNormal:(NSString *)keys applyMapping:(BOOL)applyMapping {
+    // GTK ex_normal: enter normal mode then feed RHS keys; bang skips mapping.
+    self.vim.mode = VimModeNormal;
+    [self.vim reset];
+    if (applyMapping) {
+        for (NSUInteger i = 0; i < keys.length; i++) {
+            unichar c = [keys characterAtIndex:i];
+            [self.vim handleKeyCode:0 modifiers:0 characters:[NSString stringWithCharacters:&c length:1]];
+        }
+    } else {
+        [self.vim feedParserString:keys];
+    }
+}
+
+- (void)exHandlerAdd:(NSString *)scheme command:(NSString *)command success:(void (^)(BOOL))callback {
+    BOOL ok = [[VimbConfig shared].handler addScheme:scheme command:command];
+    if (ok) {
+        [self showMessage:[NSString stringWithFormat:@"handler %@ -> %@", scheme, command] error:NO];
+    }
+    if (callback) { callback(ok); }
+}
+
+- (void)exHandlerRemove:(NSString *)scheme success:(void (^)(BOOL))callback {
+    BOOL ok = [[VimbConfig shared].handler removeScheme:scheme];
+    if (ok) { [self showMessage:[NSString stringWithFormat:@"handler %@ removed", scheme] error:NO]; }
+    if (callback) { callback(ok); }
 }
 
 // :bookmarks — present the bookmark browser panel (parity with src/bookmark.c's
@@ -1020,10 +1120,12 @@ static const CGFloat kStatusHeight = 24.0;
                 break;
         }
     } else if ([action isEqualToString:@"INSERT"]) {
-        // The script focused a form field. For 'e' we can also seed the ';'
-        // register with the field value (best-effort editor support).
+        // The script focused a form field. For 'e' we seed the ';' register
+        // with the field value and auto-open the editor (GTK hints.c:385-387
+        // input_open_editor on the ';e' hint mode INSERT result).
         if (mode == 'e') {
             [self.registers set:value forKey:';'];
+            [self vimOpenEditor];
         }
     }
 
@@ -1099,7 +1201,6 @@ static const CGFloat kStatusHeight = 24.0;
         case 'h': [self.activeTab.webView scrollBy:-(step * count) y:0]; break;
         case 'l': [self.activeTab.webView scrollBy:(step * count) y:0]; break;
         case 0x14: /* ^P unused here */ [self.activeTab.webView scrollBy:0 y:(step * count)]; break;
-        case ' ':
         case 0x06: /* ^F */ [self pagedScrollDown:count]; break;
         case 0x02: /* ^B */ [self pagedScrollUp:count]; break;
         case 0x15: /* ^U */ [self pagedScrollHalfUp:count]; break;
@@ -1122,9 +1223,6 @@ static const CGFloat kStatusHeight = 24.0;
             break;
         case '0': [self.activeTab.webView scrollToX:0]; break;
         case '$': [self.activeTab.webView scrollToXEnd]; break;
-        case 'H': [self.activeTab.webView scrollToTop]; break;
-        case 'M': [self.activeTab.webView scrollToMiddle]; break;
-        case 'L': [self.activeTab.webView scrollToBottom]; break;
         default: break;
     }
 }
@@ -1365,17 +1463,22 @@ static const CGFloat kStatusHeight = 24.0;
         }];
 }
 
-- (void)vimYankURI {
+- (void)vimYankURI:(unichar)reg {
     NSString *url = self.activeTab.url.absoluteString ?: @"";
-    [self.registers set:url forKey:'"'];
+    [self.registers set:url forKey:reg];
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     [pb clearContents];
     [pb setString:url forType:NSPasteboardTypeString];
     [self showMessage:[NSString stringWithFormat:@"yanked %@", url] error:NO];
 }
 
-- (void)vimYankSelection {
-    // Y: yank the current page selection (command_yank COMMAND_YANK_SELECTION).
+- (NSString *)vimCurrentURI {
+    return self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString ?: @"";
+}
+
+- (void)vimYankSelection:(unichar)reg {
+    // Y: yank the current page selection into the register (command_yank
+    // COMMAND_YANK_SELECTION).
     __weak typeof(self) weakSelf = self;
     [self.activeTab.webView evaluateJavaScript:
         @"(window.getSelection&&window.getSelection().toString?window.getSelection().toString():'')"
@@ -1390,7 +1493,7 @@ static const CGFloat kStatusHeight = 24.0;
                     [weakSelf showMessage:@"no selection to yank" error:NO];
                     return;
                 }
-                [weakSelf.registers set:sel forKey:'"'];
+                [weakSelf.registers set:sel forKey:reg];
                 NSPasteboard *pb = [NSPasteboard generalPasteboard];
                 [pb clearContents];
                 [pb setString:sel forType:NSPasteboardTypeString];

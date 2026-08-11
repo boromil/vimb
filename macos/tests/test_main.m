@@ -77,7 +77,9 @@ typedef NS_ENUM(NSInteger, ScrollMode) { ScrollModeNone = 0, ScrollModeScroll };
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error {}
 - (void)vimFocusWebView {}
 - (void)vimEnterPassThrough {}
-- (void)vimYankURI {}
+- (void)vimYankURI:(unichar)reg {}
+- (void)vimYankSelection:(unichar)reg {}
+- (NSString *)vimCurrentURI { return @""; }
 - (void)vimSetMark:(unichar)c {}
 - (void)vimJumpMark:(unichar)c {}
 - (void)vimViewSource {}
@@ -316,18 +318,28 @@ static void test_config_shortcuts_and_sources(void) {
 - (void)exReload {}
 - (void)exStop {}
 - (void)exHome {}
-- (void)exQuit {}
-- (void)exQuitAll {}
-- (void)exEval:(NSString *)js {}
-- (void)exShell:(NSString *)arg {}
-- (void)exMessage:(NSString *)msg error:(BOOL)error {}
+- (void)exQuit:(BOOL)bang { (void)bang; }
+- (void)exQuitAll:(BOOL)bang { (void)bang; }
+- (void)exEval:(NSString *)js suppressOutput:(BOOL)suppress { (void)js; (void)suppress; }
+- (void)exNormal:(NSString *)keys applyMapping:(BOOL)applyMapping { (void)keys; (void)applyMapping; }
+- (void)exClearData:(NSString *)types { (void)types; }
+- (void)exPrint {}
+- (void)exHandlerAdd:(NSString *)scheme command:(NSString *)command success:(void (^)(BOOL))callback {
+    (void)scheme; (void)command; if (callback) callback(YES);
+}
+- (void)exHandlerRemove:(NSString *)scheme success:(void (^)(BOOL))callback {
+    (void)scheme; if (callback) callback(YES);
+}
+- (void)exShell:(NSString *)arg async:(BOOL)async { (void)arg; (void)async; }
+- (void)exMessage:(NSString *)msg error:(BOOL)error { (void)msg; (void)error; }
 - (void)exSavePage:(NSString *)path {}
 - (void)exRegisterList {}
 - (void)exSource:(NSString *)path {}
 - (void)exQueue:(NSString *)cmd arg:(NSString *)arg {}
 - (void)exShowMessages {}
-- (void)exBookmarkAdd:(NSString *)url title:(NSString *)title {}
-- (void)exBookmarkRemove:(NSString *)match {}
+- (void)exBookmarkAdd:(NSString *)url title:(NSString *)title { (void)url; (void)title; }
+- (void)exBookmarkCurrent:(NSString *)tags { (void)tags; }
+- (void)exUnbookmark:(NSString *)match { (void)match; }
 @end
 
 static void test_ex_open(void) {
@@ -388,10 +400,12 @@ static void test_ex_shortcut_and_bang(void) {
     VimbEx *ex = [[VimbEx alloc] init];
     SpyExActor *a = [[SpyExActor alloc] init];
     ex.actor = a;
-    // A leading ! is recognized and stripped before dispatch.
+    // GTK has no "leading ! runs a command" syntax: ":!open http://x.com" is
+    // not a recognized command (name "!open"), so the whole line is treated
+    // as a URL/query to open.
     [ex runCommand:@"!open http://x.com"];
     TEST_ASSERT_EQ_I(a.opened.count, 1);
-    TEST_ASSERT_EQ_STR(a.opened[0], @"http://x.com");
+    TEST_ASSERT_EQ_STR(a.opened[0], @"!open http://x.com");
 }
 
 #pragma mark - VimbEngine

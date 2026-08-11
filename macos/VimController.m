@@ -387,7 +387,9 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     if (self.phase == HBPhaseComplete) {
         NSArray *mapped = [self commandForKey:(unichar)self.ukey];
         if (mapped == nil) {
-            // No command attached: let the platform handle the key.
+            // No command attached: let the platform handle the key. Reset the
+            // pending parser state so a subsequent key isn't misparsed.
+            [self resetParserAfterDispatch];
             return HBResultError;
         }
         HBResult r = [self invokeHandler:mapped c:self.ukey k:self.lastKey k2:self.key2 k3:self.key3 cnt:self.count reg:self.reg delegate:d];
@@ -417,7 +419,6 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         case 0x1a: return @[@"pass"];        // ^Z
         case 0x1b: return @[@"esc"];         // ESC
         case 0x18: return @[@"dec"];         // ^X
-        case ' ' : return @[@"scroll"];      // space (scroll down a page)
         case '#': case '*':
                         return @[@"searchsel"];
         case '\'': return @[@"mark"];
@@ -426,8 +427,8 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         case ';': return @[@"hint"];
         case '$': case '0': return @[@"scroll"];
         case 'F': case 'f': return @[@"cmdline"];   // f/F lead-in (find/hint follow)
-        case 'G': case 'H': case 'M': case 'L':
-                        return @[@"scroll"];
+        case 'G':
+                        return @[@"scroll"];   // G scroll; H/M/L pass through (GTK NULL)
         case 'N': case 'n': return @[@"search"];
         case 'O': case 'o': case 'T': case 't':
                         return @[@"inputopen"];
@@ -537,13 +538,17 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"inputopen"]) {
-        // o/O/t/T : open prompt prefilled with the command prefix.
+        // o/O/t/T : open prompt. Uppercase O/T pre-fills the current URI
+        // (GTK normal_input_open src/normal.c:566-580).
         BOOL tab = (c == 't' || c == 'T');    // t/T -> tabopen, o/O -> open
-        BOOL withURI = (c == 'O' || c == 'T'); // uppercase pre-fills current URI
+        BOOL withURI = (c == 'O' || c == 'T');
         NSString *prefix = tab ? @"tabopen " : @"open ";
+        if (withURI && [d respondsToSelector:@selector(vimCurrentURI)]) {
+            NSString *uri = [d vimCurrentURI];
+            if (uri.length) { prefix = [prefix stringByAppendingString:uri]; }
+        }
         self.mode = VimModeCommand;
         [d vimOpenPrompt:prefix mode:VimModeCommand];
-        (void)withURI;
         return HBResultComplete;
     }
     if ([name isEqualToString:@"openclipboard"]) {
@@ -555,8 +560,11 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"yank"]) {
-        if (c == 'Y') { [d vimYankSelection]; }
-        else { [d vimYankURI]; }
+        // y["x]/Y["x]: yank URI/selection into the pending register ('"' if
+        // none), mirroring normal_yank -> command_yank(reg).
+        unichar reg = self.reg ? self.reg : '"';
+        if (c == 'Y') { [d vimYankSelection:reg]; }
+        else { [d vimYankURI:reg]; }
         return HBResultComplete;
     }
     if ([name isEqualToString:@"focuslast"]) {

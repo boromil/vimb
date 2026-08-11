@@ -48,8 +48,9 @@ typedef NS_ENUM(NSInteger, VimMode) {
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error;
 - (void)vimFocusWebView;
 - (void)vimEnterPassThrough;                // ^Z
-- (void)vimYankURI;                         // y
-- (void)vimYankSelection;                   // Y: yank page selection
+- (void)vimYankURI:(unichar)reg;            // y["x] yank URI into register
+- (void)vimYankSelection:(unichar)reg;      // Y["x] yank page selection into register
+- (nullable NSString *)vimCurrentURI;       // current tab URL (O/T open prefill)
 - (void)vimOpenEditor;                      // Ctrl-T in input / ;e hint: edit focused field
 - (void)vimSetMark:(unichar)c;              // m<char>
 - (void)vimJumpMark:(unichar)c;             // '<char>
@@ -92,6 +93,10 @@ typedef NS_ENUM(NSInteger, VimMode) {
 // Called when the user finishes typing a prompt line / hint selection.
 - (void)commandLineCommitted:(NSString *)line;
 - (void)commandLineCancelled;
+// Feeds a string of keys through the parser WITHOUT applying runtime mappings
+// (used by :normal! and internal recursive key feed). Mirrors map_handle_string's
+// noremap path in src/ex.c / src/normal.c.
+- (BOOL)feedParserString:(NSString *)keys;
 @end
 
 NS_ASSUME_NONNULL_END

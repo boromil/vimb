@@ -16,10 +16,15 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)exReload;
 - (void)exStop;
 - (void)exHome;
-- (void)exQuit;
-- (void)exQuitAll;
-- (void)exEval:(NSString *)js;
-- (void)exShell:(NSString *)arg;
+- (void)exQuit:(BOOL)bang;
+- (void)exQuitAll:(BOOL)bang;
+- (void)exEval:(NSString *)js suppressOutput:(BOOL)suppress;
+- (void)exShell:(NSString *)arg async:(BOOL)async;
+- (void)exNormal:(NSString *)keys applyMapping:(BOOL)applyMapping;
+- (void)exClearData:(nonnull NSString *)types;
+- (void)exPrint;
+- (void)exHandlerAdd:(NSString *)scheme command:(NSString *)command success:(nullable void (^)(BOOL))callback;
+- (void)exHandlerRemove:(NSString *)scheme success:(nullable void (^)(BOOL))callback;
 - (void)exMessage:(NSString *)msg error:(BOOL)error;
 - (void)exSavePage:(nullable NSString *)path;
 - (void)exRegisterList;
@@ -27,7 +32,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)exQueue:(NSString *)cmd arg:(nullable NSString *)arg;
 - (void)exShowMessages;
 - (void)exBookmarkAdd:(NSString *)url title:(NSString *)title;
-- (void)exBookmarkRemove:(NSString *)match;
+- (void)exBookmarkCurrent:(nullable NSString *)tags;
+- (void)exUnbookmark:(nullable NSString *)match;
 // Optional: open the bookmark browser panel. Implemented by the window
 // controller; treated as a no-op by actors that don't support it.
 @optional

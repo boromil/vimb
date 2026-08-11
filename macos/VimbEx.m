@@ -23,13 +23,13 @@ typedef NS_ENUM(NSInteger, ExCmd) {
             @[@"bmr", @"bookmark"],
             @[@"bookmarks", @"bookmarks"],
             @[@"cmap", @"map"], @[@"cnoremap", @"map"], @[@"cunmap", @"unmap"],
-            @[@"cleardata", @"message"],
-            @[@"hardcopy", @"message"],
-            @[@"handler-add", @"message"], @[@"handler-remove", @"message"],
+            @[@"cleardata", @"cleardata"],
+            @[@"hardcopy", @"hardcopy"],
+            @[@"handler-add", @"handler"], @[@"handler-remove", @"handler"],
             @[@"eval", @"eval"],
             @[@"imap", @"map"], @[@"inoremap", @"map"], @[@"iunmap", @"unmap"],
             @[@"nmap", @"map"], @[@"nnoremap", @"map"], @[@"nunmap", @"unmap"],
-            @[@"normal", @"eval"],
+            @[@"normal", @"normal"],
             @[@"open", @"open"],
             @[@"quit", @"quit"], @[@"quitall", @"quitall"],
             @[@"qunshift", @"queue"], @[@"qclear", @"queue"], @[@"qpop", @"queue"], @[@"qpush", @"queue"],
@@ -93,13 +93,26 @@ typedef NS_ENUM(NSInteger, ExCmd) {
 
     NSString *cmdLine = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     BOOL bang = NO;
-    if ([cmdLine hasPrefix:@"!"]) { bang = YES; cmdLine = [cmdLine substringFromIndex:1]; }
-    // 'normal !' and 'eval !' allow bang; strip and ignore for the common ones.
 
     // Split command name from args (supports quoted arguments via spaces).
     NSArray<NSString *> *tokens = [self tokenize:cmdLine];
     if (tokens.count == 0) { return NO; }
     NSString *name = tokens[0];
+    // GTK parses a post-command bang (e.g. :quit! / :eval! / :normal! gg /
+    // :shellcmd! ls) for commands that declare EX_FLAG_BANG. Strip it from the
+    // command name the way parse_bang() consumes it after the name.
+    if (name.length > 1 && [name hasSuffix:@"!"]) {
+        NSMutableArray<NSString *> *mutable = [tokens mutableCopy];
+        NSString *stripped = [name substringToIndex:name.length - 1];
+        if (stripped.length) {
+            mutable[0] = stripped;
+        } else {
+            [mutable removeObjectAtIndex:0];
+        }
+        tokens = mutable;
+        name = stripped;
+        bang = YES;
+    }
     NSRange argRange = NSMakeRange(1, tokens.count - 1);
     NSString *arg = [[tokens subarrayWithRange:argRange] componentsJoinedByString:@" "];
 
@@ -134,21 +147,38 @@ typedef NS_ENUM(NSInteger, ExCmd) {
         return NO;
     }
     if ([type isEqualToString:@"quit"]) {
-        [a exQuit];
+        [a exQuit:bang];
         return NO;
     }
     if ([type isEqualToString:@"quitall"]) {
-        [a exQuitAll];
+        [a exQuitAll:bang];
         return NO;
     }
     if ([type isEqualToString:@"tabcmd"]) {
         [self handleTabcmd:full arg:arg actor:a];
         return NO;
     }
-    if ([type isEqualToString:@"eval"]) {
-        [a exEval:[self evalArg:full arg:arg]];
+    if ([type isEqualToString:@"normal"]) {
+        // GTK ex_normal: enter normal mode, then feed RHS as normal keys;
+        // bang (":normal!") skips mapping (map_handle_string with noremap).
+        [a exNormal:arg applyMapping:!bang];
         return NO;
     }
+    if ([type isEqualToString:@"eval"]) {
+        [a exEval:[self evalArg:full arg:arg] suppressOutput:bang];
+        return NO;
+    }
+    if ([type isEqualToString:@"cleardata"]) {
+        // GTK: types separated by comma (lhs); '-' or empty = all. Pass the
+        // raw types string through to the actor.
+        [a exClearData:arg];
+        return NO;
+    }
+    if ([type isEqualToString:@"hardcopy"]) {
+        [a exPrint];
+        return NO;
+    }
+    if ([type isEqualToString:@"handler"]) { return [self handleHandlerCommand:full arg:arg actor:a]; }
     if ([type isEqualToString:@"save"]) { [a exSavePage:arg.length ? arg : nil]; return NO; }
     if ([type isEqualToString:@"register"]) { [a exRegisterList]; return NO; }
     if ([type isEqualToString:@"autocmd"]) {
@@ -176,22 +206,17 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     if ([type isEqualToString:@"shortcut"]) { return [self handleShortcutCommand:full arg:arg actor:a]; }
     if ([type isEqualToString:@"queue"]) { [a exQueue:full arg:arg]; return NO; }
     if ([type isEqualToString:@"bookmark"]) {
-        NSString *fullName = full; // bma/bmr
-        NSString *rest = arg;
-        if ([fullName isEqualToString:@"bma"]) {
-            // format: :bma [url [title]]  (no / with) — keep simple: url then title
-            NSArray<NSString *> *p = [self tokenize:arg];
-            if (p.count >= 1) {
-                [a exBookmarkAdd:p[0] title:(p.count >= 2 ? p[1] : @"")];
-            } else {
-                [a exMessage:@"bma requires an URL" error:YES];
-            }
-        } else if ([fullName isEqualToString:@"bmr"]) {
-            [a exBookmarkRemove:rest];
+        // GTK ex_bookmark: :bma [tags] bookmarks the CURRENT page (RHS is only
+        // tags); :bmr [match] removes by exact match, or the current page when
+        // no arg is given.
+        if ([full isEqualToString:@"bma"]) {
+            [a exBookmarkCurrent:arg.length ? arg : nil];
+        } else { // bmr
+            [a exUnbookmark:arg.length ? arg : nil];
         }
         return NO;
     }
-    if ([type isEqualToString:@"shell"]) { [a exShell:arg]; return NO; }
+    if ([type isEqualToString:@"shell"]) { [a exShell:arg async:bang]; return NO; }
     if ([type isEqualToString:@"bookmarks"]) {
         if ([a respondsToSelector:@selector(exShowBookmarks)]) {
             [a exShowBookmarks];
@@ -236,11 +261,45 @@ typedef NS_ENUM(NSInteger, ExCmd) {
 }
 
 - (NSString *)evalArg:(NSString *)full arg:(NSString *)arg {
-    // :eval <js> — pass through (bang handled upstream).
-    if ([full isEqualToString:@"normal"]) {
-        // :normal [cmd] — parse keys later; treat as eval no-op here.
-    }
     return arg;
+}
+
+// :handler-add <scheme>=<command> / :handler-remove <scheme> (GTK ex_handlers).
+- (BOOL)handleHandlerCommand:(NSString *)full arg:(NSString *)arg actor:(id<VimbExActor>)a {
+    if ([full isEqualToString:@"handler-add"]) {
+        NSRange eq = [arg rangeOfString:@"="];
+        if (eq.location == NSNotFound || eq.location == 0) {
+            [a exMessage:@"handler-add requires scheme=command" error:YES];
+            return NO;
+        }
+        NSString *scheme = [arg substringToIndex:eq.location];
+        NSString *command = [arg substringFromIndex:(eq.location + 1)];
+        scheme = [scheme stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        command = [command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (scheme.length == 0 || command.length == 0) {
+            [a exMessage:@"handler-add requires scheme=command" error:YES];
+            return NO;
+        }
+        __weak typeof(a) weakA = a;
+        [a exHandlerAdd:scheme command:command success:^(BOOL ok) {
+            if (!ok) {
+                [weakA exMessage:@"failed to add handler" error:YES];
+            }
+        }];
+        return NO;
+    }
+    NSString *scheme = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (scheme.length == 0) {
+        [a exMessage:@"handler-remove requires a scheme" error:YES];
+        return NO;
+    }
+    __weak typeof(a) weakA = a;
+    [a exHandlerRemove:scheme success:^(BOOL ok) {
+        if (!ok) {
+            [weakA exMessage:@"handler not found" error:YES];
+        }
+    }];
+    return NO;
 }
 
 // Maps the ex command name to its mapping mode char.

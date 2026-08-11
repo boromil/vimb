@@ -79,7 +79,7 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
     [self addSetting:@"allow-file-access-from-file-urls" type:B value:@NO];
     [self addSetting:@"allow-universal-access-from-file-urls" type:B value:@NO];
     [self addSetting:@"caret" type:B value:@NO];
-    [self addSetting:@"cursive-font" type:C value:@"serif"];
+    [self addSetting:@"cursiv-font" type:C value:@"serif"];  // GTK key name (setting.c:98)
     [self addSetting:@"dark-mode" type:B value:@NO];
     [self addSetting:@"default-charset" type:C value:@"utf-8"];
     [self addSetting:@"default-font" type:C value:@"sans-serif"];
@@ -107,6 +107,7 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
     [self addSetting:@"mediasource" type:B value:@NO];
     [self addSetting:@"minimum-font-size" type:I value:@5];
     [self addSetting:@"monospace-font" type:C value:@"monospace"];
+    [self addSetting:@"monospace-font-size" type:I value:@13];
     [self addSetting:@"notification" type:C value:@"ask"];
     [self addSetting:@"prevent-newwindow" type:B value:@NO];
     [self addSetting:@"print-backgrounds" type:B value:@YES];

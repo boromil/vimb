@@ -67,8 +67,9 @@ static NSString *S(unichar c) {
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error { [self record:[NSString stringWithFormat:@"msg:%d:%@", error, message]]; }
 - (void)vimFocusWebView { [self record:@"focusweb"]; }
 - (void)vimEnterPassThrough { [self record:@"passthrough"]; }
-- (void)vimYankURI { [self record:@"yank"]; }
-- (void)vimYankSelection { [self record:@"yankselection"]; }
+- (void)vimYankURI:(unichar)reg { [self record:[NSString stringWithFormat:@"yank:%C", reg]]; }
+- (void)vimYankSelection:(unichar)reg { [self record:[NSString stringWithFormat:@"yankselection:%C", reg]]; }
+- (NSString *)vimCurrentURI { return @"http://current.example/"; }
 - (void)vimOpenEditor { [self record:@"editor"]; }
 - (void)vimSetMark:(unichar)c { [self record:[NSString stringWithFormat:@"setmark:%C", c]]; }
 - (void)vimJumpMark:(unichar)c { [self record:[NSString stringWithFormat:@"jumpmark:%C", c]]; }
@@ -99,10 +100,27 @@ static NSString *S(unichar c) {
 - (void)exReload { [_calls addObject:@"reload"]; }
 - (void)exStop { [_calls addObject:@"stop"]; }
 - (void)exHome { [_calls addObject:@"home"]; }
-- (void)exQuit { [_calls addObject:@"quit"]; }
-- (void)exQuitAll { [_calls addObject:@"quitall"]; }
-- (void)exEval:(NSString *)js { [_calls addObject:[@"eval:" stringByAppendingString:js]]; }
-- (void)exShell:(NSString *)arg { [_calls addObject:[@"shell:" stringByAppendingString:arg]]; }
+- (void)exQuit:(BOOL)bang { [_calls addObject:[@"quit" stringByAppendingString:(bang ? @"!" : @"")]]; }
+- (void)exQuitAll:(BOOL)bang { [_calls addObject:[@"quitall" stringByAppendingString:(bang ? @"!" : @"")]]; }
+- (void)exEval:(NSString *)js suppressOutput:(BOOL)suppress {
+    [_calls addObject:[NSString stringWithFormat:@"eval:%@%@", js, (suppress ? @"!" : @"")]];
+}
+- (void)exNormal:(NSString *)keys applyMapping:(BOOL)applyMapping {
+    [_calls addObject:[NSString stringWithFormat:@"normal:%@%@", keys, (applyMapping ? @"" : @"!")]];
+}
+- (void)exClearData:(NSString *)types { [_calls addObject:[@"cleardata:" stringByAppendingString:(types ?: @"")]]; }
+- (void)exPrint { [_calls addObject:@"hardcopy"]; }
+- (void)exHandlerAdd:(NSString *)scheme command:(NSString *)command success:(void (^)(BOOL))callback {
+    [_calls addObject:[NSString stringWithFormat:@"handleradd:%@:%@", scheme, command]];
+    if (callback) { callback(YES); }
+}
+- (void)exHandlerRemove:(NSString *)scheme success:(void (^)(BOOL))callback {
+    [_calls addObject:[@"handlerremove:" stringByAppendingString:(scheme ?: @"")]];
+    if (callback) { callback(YES); }
+}
+- (void)exShell:(NSString *)arg async:(BOOL)async {
+    [_calls addObject:[NSString stringWithFormat:@"shell:%@%@", arg, (async ? @"!" : @"")]];
+}
 - (void)exMessage:(NSString *)msg error:(BOOL)error { [_calls addObject:[NSString stringWithFormat:@"msg:%d:%@", error, msg]]; }
 - (void)exSavePage:(NSString *)path { [_calls addObject:[@"save:" stringByAppendingString:(path ?: @"")]]; }
 - (void)exRegisterList { [_calls addObject:@"register"]; }
@@ -110,7 +128,8 @@ static NSString *S(unichar c) {
 - (void)exQueue:(NSString *)cmd arg:(NSString *)arg { [_calls addObject:[NSString stringWithFormat:@"queue:%@:%@", cmd, (arg ?: @"")]]; }
 - (void)exShowMessages { [_calls addObject:@"showmessages"]; }
 - (void)exBookmarkAdd:(NSString *)url title:(NSString *)title { [_calls addObject:[NSString stringWithFormat:@"bma:%@:%@", url, title]]; }
-- (void)exBookmarkRemove:(NSString *)match { [_calls addObject:[@"bmr:" stringByAppendingString:match]]; }
+- (void)exBookmarkCurrent:(NSString *)tags { [_calls addObject:[@"bookmarkcurrent:" stringByAppendingString:(tags ?: @"")]]; }
+- (void)exUnbookmark:(NSString *)match { [_calls addObject:[@"unbookmark:" stringByAppendingString:(match ?: @"")]]; }
 @end
 
 static BehavSpy *newSpy(void) {
@@ -524,30 +543,45 @@ static void test_ex_every_type(void) {
     [ex runCommand:@"eval 1+1"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"eval:1+1"]);
     [ex runCommand:@"normal gg"];
-    TEST_ASSERT_TRUE([a.calls containsObject:@"eval:gg"]);
+    TEST_ASSERT_TRUE([a.calls containsObject:@"normal:gg"]);
+    [ex runCommand:@"normal! gg"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"normal:gg!"]);
+    [ex runCommand:@"eval! 1+1"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"eval:1+1!"]);
 
     [ex runCommand:@"source /tmp/rc"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"source:/tmp/rc"]);
 
     [ex runCommand:@"shellcmd ls -la"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"shell:ls -la"]);
-    [ex runCommand:@"shellex echo hi"];
-    TEST_ASSERT_TRUE([a.calls containsObject:@"shell:echo hi"]);
+    [ex runCommand:@"shellcmd! ls"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"shell:ls!"]);
 
     [ex runCommand:@"cleardata"];
-    TEST_ASSERT_TRUE([a.calls containsObject:@"msg:0:"]);
+    TEST_ASSERT_TRUE([a.calls containsObject:@"cleardata:"]);
+    [ex runCommand:@"cleardata cookies,disk-cache"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"cleardata:cookies,disk-cache"]);
     [ex runCommand:@"hardcopy"];
-    TEST_ASSERT_TRUE([a.calls containsObject:@"msg:0:"]);
+    TEST_ASSERT_TRUE([a.calls containsObject:@"hardcopy"]);
+
+    [ex runCommand:@"handler-add tel=xdg-open %s"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"handleradd:tel:xdg-open %s"]);
+    [ex runCommand:@"handler-remove tel"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"handlerremove:tel"]);
 
     [ex runCommand:@"qpush foo"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"queue:qpush:foo"]);
     [ex runCommand:@"qpop"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"queue:qpop:"]);
 
-    [ex runCommand:@"bma https://x.com Title"];
-    TEST_ASSERT_TRUE([a.calls containsObject:@"bma:https://x.com:Title"]);
+    [ex runCommand:@"bma"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"bookmarkcurrent:"]);
+    [ex runCommand:@"bma work"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"bookmarkcurrent:work"]);
     [ex runCommand:@"bmr x.com"];
-    TEST_ASSERT_TRUE([a.calls containsObject:@"bmr:x.com"]);
+    TEST_ASSERT_TRUE([a.calls containsObject:@"unbookmark:x.com"]);
+    [ex runCommand:@"bmr"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"unbookmark:"]);
 }
 
 static void test_ex_tabcmd(void) {
@@ -1019,7 +1053,7 @@ static void test_controller_cmdline_and_input_open(void) {
     vc = newVc(spy); feed(vc, @";"); feed(vc, @"o");
     TEST_ASSERT_TRUE([spy.calls containsObject:@"enterhints:o:0"]);
 
-    // o / O / t / T -> inputopen.
+    // o / O / t / T -> inputopen. Uppercase O/T prefill the current URI.
     [spy.calls removeAllObjects];
     vc = newVc(spy); feed(vc, @"o");
     TEST_ASSERT_EQ_I(vc.mode, VimModeCommand);
@@ -1027,7 +1061,9 @@ static void test_controller_cmdline_and_input_open(void) {
     vc = newVc(spy); feed(vc, @"t");
     TEST_ASSERT_TRUE([spy.calls containsObject:@"prompt:1:tabopen "]);
     vc = newVc(spy); feed(vc, @"O"); TEST_ASSERT_EQ_I(vc.mode, VimModeCommand);
-    vc = newVc(spy); feed(vc, @"T"); TEST_ASSERT_EQ_I(vc.mode, VimModeCommand);
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"prompt:1:open http://current.example/"]); // O prefills URI
+    vc = newVc(spy); feed(vc, @"T");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"prompt:1:tabopen http://current.example/"]); // T prefills URI
 }
 
 static void test_controller_openclipboard_yank_focus(void) {
@@ -1041,11 +1077,18 @@ static void test_controller_openclipboard_yank_focus(void) {
     vc = newVc(spy); feed(vc, @"\""); feed(vc, @"a"); feed(vc, @"p");
     TEST_ASSERT_TRUE([spy.calls containsObject:@"clipboard:a"]);
 
-    // yank y (URI) / Y (selection).
+    // yank y (URI) / Y (selection), default register is '"'.
     [spy.calls removeAllObjects];
-    feed(vc, @"y"); TEST_ASSERT_TRUE([spy.calls containsObject:@"yank"]);
+    feed(vc, @"y"); TEST_ASSERT_TRUE([spy.calls containsObject:@"yank:\""]);
     [spy.calls removeAllObjects];
-    feed(vc, @"Y"); TEST_ASSERT_TRUE([spy.calls containsObject:@"yankselection"]);
+    feed(vc, @"Y"); TEST_ASSERT_TRUE([spy.calls containsObject:@"yankselection:\""]);
+    // register-aware yank: "a y -> yank:a, "b Y -> yankselection:b
+    [spy.calls removeAllObjects];
+    vc = newVc(spy); feed(vc, @"\""); feed(vc, @"a"); feed(vc, @"y");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"yank:a"]);
+    [spy.calls removeAllObjects];
+    vc = newVc(spy); feed(vc, @"\""); feed(vc, @"b"); feed(vc, @"Y");
+    TEST_ASSERT_TRUE([spy.calls containsObject:@"yankselection:b"]);
 
     // focuslast 'i'.
     [spy.calls removeAllObjects];
@@ -1098,10 +1141,10 @@ static void test_controller_gcmd(void) {
 static void test_controller_prevnext_and_scroll_keys(void) {
     BehavSpy *spy = newSpy();
     VimController *vc = newVc(spy);
-    // All the scroll variants.
-    unichar keys[] = {'h','j','k','l','G','H','M','L','$','0',' '};
-    for (int i = 0; i < 11; i++) {
-        unichar k = keys[i];
+    // These keys scroll on the GTK side (normal.c: 'h','j','k','l','G','$','0').
+    unichar scrollKeys[] = {'h','j','k','l','G','$','0'};
+    for (int i = 0; i < 7; i++) {
+        unichar k = scrollKeys[i];
         [spy.calls removeAllObjects];
         vc = newVc(spy);
         BOOL consumed = [vc handleKeyCode:0 modifiers:0 characters:[[NSString alloc] initWithCharacters:&k length:1]];
@@ -1109,6 +1152,19 @@ static void test_controller_prevnext_and_scroll_keys(void) {
         __block BOOL sawScroll = NO;
         for (NSString *c in spy.calls) { if ([c hasPrefix:@"scroll:"]) sawScroll = YES; }
         TEST_ASSERT_TRUE(sawScroll);
+    }
+    // H/M/L/space match GTK normal.c: they are NULL (not scroll) and pass
+    // through to the page, so the controller returns NO (not consumed).
+    unichar passKeys[] = {'H','M','L',' '};
+    for (int i = 0; i < 4; i++) {
+        unichar k = passKeys[i];
+        [spy.calls removeAllObjects];
+        vc = newVc(spy);
+        BOOL consumed = [vc handleKeyCode:0 modifiers:0 characters:[[NSString alloc] initWithCharacters:&k length:1]];
+        TEST_ASSERT_FALSE(consumed);
+        __block BOOL sawScroll = NO;
+        for (NSString *c in spy.calls) { if ([c hasPrefix:@"scroll:"]) sawScroll = YES; }
+        TEST_ASSERT_FALSE(sawScroll);
     }
     // [ or ] maps to prevnext which the backend reports as handled (consumed).
     BOOL r = [vc handleKeyCode:0 modifiers:0 characters:S('[')];
@@ -1323,11 +1379,12 @@ static void test_ex_bma_and_shortcut_errors(void) {
     BehavActor *a = newActor();
     VimbEx *ex = [[VimbEx alloc] init];
     ex.actor = a;
-    // bma with no URL -> error.
+    // :bma with no arg bookmarks the CURRENT page (valid — no error), and
+    // :bmr with no arg unbookmarks the current page.
     [ex runCommand:@"bma"];
-    __block BOOL sawBma = NO;
-    for (NSString *c in a.calls) { if ([c containsString:@"bma requires"]) sawBma = YES; }
-    TEST_ASSERT_TRUE(sawBma);
+    TEST_ASSERT_TRUE([a.calls containsObject:@"bookmarkcurrent:"]);
+    [ex runCommand:@"bmr"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"unbookmark:"]);
     // shortcut-add with no name/url -> error.
     [a.calls removeAllObjects];
     [ex runCommand:@"shortcut-add"];
