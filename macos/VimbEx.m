@@ -41,10 +41,10 @@ typedef NS_ENUM(NSInteger, ExCmd) {
             @[@"tabopen", @"open"],
             @[@"tabclose", @"tabcmd"], @[@"tabnext", @"tabcmd"], @[@"tabprev", @"tabcmd"],
             @[@"tabprevious", @"tabcmd"], @[@"tabfirst", @"tabcmd"], @[@"tablast", @"tabcmd"],
-            // short aliases commonly used
-            @[@"o", @"open"], @[@"bdelete", @"tabcmd"], @[@"bd", @"tabcmd"],
-            @[@"tabn", @"tabcmd"], @[@"tabp", @"tabcmd"], @[@"reload", @"open"],
-            @[@"r", @"open"],
+            // Short aliases that resolve exactly as GTK4's first-prefix abbreviation
+            // (kept for clarity; no extra commands are invented beyond ex.c).
+            @[@"o", @"open"],
+            @[@"tabn", @"tabcmd"], @[@"tabp", @"tabcmd"],
         ];
     }
     return self;
@@ -125,12 +125,7 @@ typedef NS_ENUM(NSInteger, ExCmd) {
 
     if ([type isEqualToString:@"open"]) {
         BOOL newTab = [full isEqualToString:@"tabopen"];
-        // "reload"/"r" reload instead of open
-        if ([full isEqualToString:@"reload"] || [full isEqualToString:@"r"]) {
-            [a exReload];
-        } else {
-            [a exOpen:arg newTab:newTab];
-        }
+        [a exOpen:arg newTab:newTab];
         return NO;
     }
     if ([type isEqualToString:@"set"]) {
@@ -226,9 +221,7 @@ typedef NS_ENUM(NSInteger, ExCmd) {
     else if ([full isEqualToString:@"tabprev"] || [full isEqualToString:@"tabprevious"] || [full isEqualToString:@"tabp"]) { [a exPrevTab]; }
     else if ([full isEqualToString:@"tabfirst"]) { [a exFirstTab]; }
     else if ([full isEqualToString:@"tablast"]) { [a exLastTab]; }
-    else if ([full isEqualToString:@"bdelete"] || [full isEqualToString:@"bd"]) {
-        [a exCloseActiveTab];
-    } else {
+    else {
         // buffer <n> selects a tab
         NSInteger n = arg.integerValue;
         if (n > 0) { [a exMessage:@"" error:NO]; /* tab selection is via :tabn */ }

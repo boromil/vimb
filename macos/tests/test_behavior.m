@@ -475,9 +475,14 @@ static void test_ex_every_type(void) {
     VimbEx *ex = [[VimbEx alloc] init];
     ex.actor = a;
 
-    [ex runCommand:@"reload"];            // reload/r alias -> exReload
-    [ex runCommand:@"r example.com"];     // 'r' alias -> reload
-    TEST_ASSERT_TRUE([a.calls containsObject:@"reload"]);
+    // Strict ex.c parity: there is NO :reload/:r/:bd/:bdelete command. ":r"
+    // abbreviates to "register" (first-prefix-wins), and ":reload"/":bd" are
+    // unknown -> reported that way (not treated as URLs since they are single
+    // bare tokens). exReload remains reachable only via normal-mode (r/R/^C).
+    [ex runCommand:@"r"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"register"]);
+    [ex runCommand:@"reload"];
+    TEST_ASSERT_TRUE([a.calls containsObject:@"msg:1:Invalid command: reload"]);
 
     [ex runCommand:@"quit"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"quit"]);
@@ -533,6 +538,7 @@ static void test_ex_tabcmd(void) {
     [ex runCommand:@"tabp"];
     [ex runCommand:@"tabfirst"];
     [ex runCommand:@"tablast"];
+    // :bd / :bdelete do not exist in ex.c (strict parity) -> unknown command.
     [ex runCommand:@"bdelete"];
     [ex runCommand:@"bd"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"tabclose"]);
@@ -543,7 +549,9 @@ static void test_ex_tabcmd(void) {
     TEST_ASSERT_TRUE([a.calls containsObject:@"tabfirst"]);
     TEST_ASSERT_TRUE([a.calls containsObject:@"tablast"]);
     NSUInteger tc = 0; for (NSString *c in a.calls) { if ([c isEqualToString:@"tabclose"]) tc++; }
-    TEST_ASSERT_EQ_I((NSInteger)tc, 3); // tabclose + bdelete + bd
+    TEST_ASSERT_EQ_I((NSInteger)tc, 1); // tabclose only
+    TEST_ASSERT_TRUE([a.calls containsObject:@"msg:1:Invalid command: bdelete"]);
+    TEST_ASSERT_TRUE([a.calls containsObject:@"msg:1:Invalid command: bd"]);
 }
 
 static void test_ex_autocmd_augroup(void) {
@@ -659,6 +667,12 @@ static void test_ex_abbreviation_resolution(void) {
     // Exact names resolve to themselves.
     TEST_ASSERT_EQ_STR([ex matchCommand:@"quitall"], @"quitall");
     TEST_ASSERT_EQ_STR([ex matchCommand:@"register"], @"register");
+    // ":r" abbreviates to "register" (first prefix match in ex.c) — NOT reload;
+    // ex.c has no reload/r/bd/bdelete ex-commands.
+    TEST_ASSERT_EQ_STR([ex matchCommand:@"r"], @"register");
+    TEST_ASSERT_TRUE([ex matchCommand:@"reload"] == nil);
+    TEST_ASSERT_TRUE([ex matchCommand:@"bd"] == nil);
+    TEST_ASSERT_TRUE([ex matchCommand:@"bdelete"] == nil);
     // No match -> nil.
     TEST_ASSERT_TRUE([ex matchCommand:@""] == nil);
     TEST_ASSERT_TRUE([ex matchCommand:@"zzz"] == nil);
