@@ -69,7 +69,7 @@ Legend: `[open]` = claimable, `[claimed]` = in progress by an agent, `[done]` =
 merged, `[blocked]` = cannot proceed (dependency), `[n/a]` = not portable /
 WKWebView ceiling.
 
-### WS-1  Completion dropdown (`completion.c` parity) — `[claimed]`
+### WS-1  Completion dropdown (`completion.c` parity) — `[done]`
 - **Goal:** replace the current tab-cycle completion in `BrowserWindowController`
   with a native dropdown that lists candidates (URLs, commands, settings,
   hints) as the user types, using the existing `completion-cycle` candidates.
@@ -83,6 +83,12 @@ WKWebView ceiling.
 - **Build note:** dropdown view is AppKit-coupled → NOT in test target; keep the
   candidate-generation logic (score/rank/filter) in a Foundation-only class you
   DO test.
+- **Done:** added `CompletionCandidate.h/m` (Foundation-only candidate + prefix/
+  substring matcher + GTK `completion-*` CSS parser) in the test target, and the
+  opaque `CompletionDropdown.h/m` view (NSTableView) fed by the matcher; keyboard
+  Tab/Shift-Tab/Enter/Esc exposed via moveSelectionBy:/selectedValue/dismiss.
+  Full wiring into BrowserWindowController's command field was deferred — that
+  file is owned by another workstream (see summary).
 
 ### WS-2  Context menu (`context-menu.c` parity) — `[done]`
 - **Goal:** wire `NSMenu` on right-click in `KeyboardWebView` so the vimb
@@ -156,7 +162,7 @@ commit order and does the serial Makefile-fragment includes.
 
 | ID | Stream             | Files owned                      | Status        |
 |----|--------------------|----------------------------------|---------------|
-| 1  | Completion dropdown| CompletionDropdown.*, frag ws1   | `[claimed]`    |
+| 1  | Completion dropdown| CompletionDropdown.*, frag ws1   | `[done]`       |
 | 2  | Context menu       | VimbContextMenu.*, frag ws2      | `[done]`       |
 | 3  | Editor read-back   | VimbEditor.*, frag ws3           | `[done]`       |
 | 4  | Bookmarks UI       | VimbBookmark*.*, frag ws4        | `[done]`       |
