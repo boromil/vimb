@@ -484,12 +484,14 @@ static void test_ex_cmd_result(void) {
     SpyExActor *a = [[SpyExActor alloc] init];
     ex.actor = a;
 
-    // Success (no keep): open / eval / normal / quit clear the input box.
+    // Success (no keep): open / quit clear the input box.
     TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"open https://x.com"],
                      (NSInteger)VimbExCmdResultSuccess);
-    TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"eval 1+1"],
-                     (NSInteger)VimbExCmdResultSuccess);
     TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"quit"],
+                     (NSInteger)VimbExCmdResultSuccess);
+
+    // eval returns CMD_SUCCESS (no keep) per ex.c:873.
+    TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"eval 1+1"],
                      (NSInteger)VimbExCmdResultSuccess);
 
     // Keep-input success: :bma keeps the line (ex.c CMD_SUCCESS|KEEPINPUT).
@@ -501,6 +503,19 @@ static void test_ex_cmd_result(void) {
     VimbExCmdResult set = [ex runCommand:@"set scroll-step=100"];
     TEST_ASSERT_TRUE(set & VimbExCmdResultSuccess);
     TEST_ASSERT_TRUE(set & VimbExCmdResultKeepInput);
+
+    // Keep-input: :normal, :register, :save, sync :shellcmd (ex.c 1055/1128/1146/1199).
+    VimbExCmdResult normal = [ex runCommand:@"normal gg"];
+    TEST_ASSERT_TRUE(normal & VimbExCmdResultKeepInput);
+    VimbExCmdResult rg = [ex runCommand:@"register"];
+    TEST_ASSERT_TRUE(rg & VimbExCmdResultKeepInput);
+    VimbExCmdResult sv = [ex runCommand:@"save /tmp/x.png"];
+    TEST_ASSERT_TRUE(sv & VimbExCmdResultKeepInput);
+    VimbExCmdResult sh = [ex runCommand:@"shellcmd ls"];
+    TEST_ASSERT_TRUE(sh & VimbExCmdResultKeepInput);
+    // Async :shellcmd! -> plain Success.
+    TEST_ASSERT_EQ_I((NSInteger)[ex runCommand:@"shellcmd! ls"],
+                     (NSInteger)VimbExCmdResultSuccess);
 
     // Error + keep-input: unknown command keeps the typo for correction.
     VimbExCmdResult unknown = [ex runCommand:@"notacommand"];

@@ -127,7 +127,7 @@ static NSString *TypeForName(NSString *name) {
         // GTK ex_normal: enter normal mode, then feed RHS as normal keys;
         // bang (":normal!") skips mapping (map_handle_string with noremap).
         [a exNormal:arg applyMapping:!bang];
-        return VimbExCmdResultSuccess;
+        return VimbExCmdResultSuccess | VimbExCmdResultKeepInput;
     }
     if ([type isEqualToString:@"eval"]) {
         [a exEval:[self evalArg:full arg:arg] suppressOutput:bang];
@@ -144,8 +144,8 @@ static NSString *TypeForName(NSString *name) {
         return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"handler"]) { return [self handleHandlerCommand:full arg:arg actor:a]; }
-    if ([type isEqualToString:@"save"]) { [a exSavePage:arg.length ? arg : nil]; return VimbExCmdResultSuccess; }
-    if ([type isEqualToString:@"register"]) { [a exRegisterList]; return VimbExCmdResultSuccess; }
+    if ([type isEqualToString:@"save"]) { [a exSavePage:arg.length ? arg : nil]; return VimbExCmdResultSuccess | VimbExCmdResultKeepInput; }
+    if ([type isEqualToString:@"register"]) { [a exRegisterList]; return VimbExCmdResultSuccess | VimbExCmdResultKeepInput; }
     if ([type isEqualToString:@"autocmd"]) {
         VimbAutocmd *au = [VimbConfig shared].autocmd;
         __weak typeof(self) weakSelf = self;
@@ -169,7 +169,7 @@ static NSString *TypeForName(NSString *name) {
         return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"shortcut"]) { return [self handleShortcutCommand:full arg:arg actor:a]; }
-    if ([type isEqualToString:@"queue"]) { [a exQueue:full arg:arg]; return VimbExCmdResultSuccess; }
+    if ([type isEqualToString:@"queue"]) { [a exQueue:full arg:arg]; return VimbExCmdResultSuccess | VimbExCmdResultKeepInput; }
     if ([type isEqualToString:@"bookmark"]) {
         // GTK ex_bookmark: :bma [tags] bookmarks the CURRENT page (RHS is only
         // tags); :bmr [match] removes by exact match, or the current page when
@@ -181,7 +181,13 @@ static NSString *TypeForName(NSString *name) {
         }
         return VimbExCmdResultSuccess | VimbExCmdResultKeepInput;
     }
-    if ([type isEqualToString:@"shell"]) { [a exShell:arg async:bang]; return VimbExCmdResultSuccess; }
+    if ([type isEqualToString:@"shell"]) {
+        // GTK ex_shellcmd: the sync (non-bang) form returns CMD_SUCCESS|KEEPINPUT
+        // (the :! invocation is async -> plain CMD_SUCCESS).
+        [a exShell:arg async:bang];
+        return bang ? VimbExCmdResultSuccess
+                    : (VimbExCmdResultSuccess | VimbExCmdResultKeepInput);
+    }
     if ([type isEqualToString:@"bookmarks"]) {
         if ([a respondsToSelector:@selector(exShowBookmarks)]) {
             [a exShowBookmarks];
