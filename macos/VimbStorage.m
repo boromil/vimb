@@ -66,6 +66,12 @@
     [self writeAll:ls];
 }
 
+- (void)append:(NSString *)line {
+    NSMutableArray *ls = [self.lines mutableCopy];
+    [ls addObject:line];
+    [self writeAll:ls];
+}
+
 - (void)push:(NSString *)line max:(NSUInteger)max {
     [self prepend:line max:max];
 }

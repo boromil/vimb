@@ -134,8 +134,23 @@ static NSString *TypeForName(NSString *name) {
         return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"cleardata"]) {
-        // GTK: types separated by comma (lhs); '-' or empty = all. Pass the
-        // raw types string through to the actor.
+        // GTK ex_cleardata (src/ex.c:916-987): a comma-separated type list, or
+        // '-' / empty = all types. Unknown type names -> CMD_ERROR|KEEPINPUT.
+        if (arg.length > 0 && ![arg isEqualToString:@"-"]) {
+            NSMutableArray<NSString *> *unknown = [NSMutableArray array];
+            NSSet<NSString *> *known = [NSSet setWithArray:[VimbExParser cleardataTypeNames]];
+            for (NSString *t in [arg componentsSeparatedByString:@","]) {
+                NSString *n = [t stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                if (n.length && ![n isEqualToString:@"all"] && ![known containsObject:n]) {
+                    [unknown addObject:n];
+                }
+            }
+            if (unknown.count) {
+                [a exMessage:[NSString stringWithFormat:@"unknown data type(s): %@",
+                              [unknown componentsJoinedByString:@" "]] error:YES];
+                return VimbExCmdResultError | VimbExCmdResultKeepInput;
+            }
+        }
         [a exClearData:arg];
         return VimbExCmdResultSuccess;
     }

@@ -170,6 +170,22 @@ static void test_storage_push_matches_prepend(void) {
     [s clear];
 }
 
+// append: adds to the END (util_file_append parity) so qpush/qpop is FIFO:
+// push a, push b, pop -> a (oldest), pop -> b.
+static void test_storage_append_fifo(void) {
+    VimbStorage *s = [VimbStorage storageInTempDirectoryWithName:@"queue1"];
+    [s clear];
+    [s append:@"a"];
+    [s append:@"b"];
+    TEST_ASSERT_EQ_I(s.lines.count, 2);
+    TEST_ASSERT_EQ_STR(s.lines[0], @"a");
+    TEST_ASSERT_EQ_STR(s.lines[1], @"b");
+    // pop front is FIFO with append.
+    TEST_ASSERT_EQ_STR(s.popLast, @"a");
+    TEST_ASSERT_EQ_STR(s.popLast, @"b");
+    [s clear];
+}
+
 static void test_storage_dirs(void) {
     // Shared base dirs resolve to real, existing paths.
     TEST_ASSERT_NOTNULL([VimbStorage appSupportDir]);
@@ -456,6 +472,17 @@ static void test_ex_parser_arg(void) {
 }
 
 // First-prefix-wins resolution rules (ex.c parse_command_name).
+// cleardata type-name table mirrors ex_cleardata (src/ex.c:930-943).
+static void test_ex_cleardata_type_names(void) {
+    NSArray<NSString *> *n = [VimbExParser cleardataTypeNames];
+    TEST_ASSERT_TRUE([n containsObject:@"cookies"]);
+    TEST_ASSERT_TRUE([n containsObject:@"offline-cache"]);
+    TEST_ASSERT_TRUE([n containsObject:@"hsts-cache"]);
+    TEST_ASSERT_TRUE([n containsObject:@"indexeddb-databases"]);
+    // No GTK 'plugin-data' (removed in WebKitGTK 6.0).
+    TEST_ASSERT_TRUE(![n containsObject:@"plugin-data"]);
+}
+
 static void test_ex_parser_abbreviation(void) {
     TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"q"], @"quit");
     TEST_ASSERT_EQ_STR([VimbExParser matchCommandForName:@"t"], @"tabopen");
@@ -821,6 +848,7 @@ int main(void) {
     RUN_TEST(test_storage_removeLine_top_popLast_clear);
     RUN_TEST(test_storage_writeAll);
     RUN_TEST(test_storage_push_matches_prepend);
+    RUN_TEST(test_storage_append_fifo);
     RUN_TEST(test_storage_dirs);
     RUN_TEST(test_config_load_defaults);
     RUN_TEST(test_config_apply_setting_getters);
@@ -836,6 +864,7 @@ int main(void) {
     RUN_TEST(test_ex_shortcut_and_bang);
     RUN_TEST(test_ex_parser_arg);
     RUN_TEST(test_ex_parser_abbreviation);
+    RUN_TEST(test_ex_cleardata_type_names);
     RUN_TEST(test_ex_cmd_result);
     RUN_TEST(test_path_unique_destination);
     RUN_TEST(test_engine_registers_marks);

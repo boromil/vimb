@@ -37,6 +37,11 @@ NS_ASSUME_NONNULL_BEGIN
 // All command names in table order (for completion / listing).
 + (NSArray<NSString *> *)commandNames;
 
+// :cleardata data-type names recognized by ex_cleardata (src/ex.c:930-943).
+// Shared for the dispatch validation in VimbEx and the WK mapping in the
+// window controller; keeps the name set in one place.
++ (NSArray<NSString *> *)cleardataTypeNames;
+
 @end
 
 NS_ASSUME_NONNULL_END

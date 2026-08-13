@@ -15,10 +15,13 @@ NS_ASSUME_NONNULL_BEGIN
 + (VimbStorage *)storageInTempDirectoryWithName:(NSString *)name;
 - (NSArray<NSString *> *)lines;
 - (void)prepend:(NSString *)line max:(NSUInteger)max;
+// Append a line to the END of the store (no dedup, no cap) — mirrors
+// util_file_append (src/util.c), used by the queue `qpush` (FIFO semantics).
+- (void)append:(NSString *)line;
 - (void)removeLine:(NSString *)line;
 - (void)writeAll:(NSArray<NSString *> *)lines;
 - (void)clear;
-- (nullable NSString *)popLast;   // last closed / queue helpers
+- (nullable NSString *)popLast;   // pops front (queue / closed helpers)
 - (void)push:(NSString *)line max:(NSUInteger)max;
 - (nullable NSString *)top;
 + (nullable NSString *)appSupportDir;

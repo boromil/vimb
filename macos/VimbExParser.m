@@ -139,6 +139,14 @@ static NSUInteger cmdsCount(void) {
     return names;
 }
 
++ (NSArray<NSString *> *)cleardataTypeNames {
+    return @[
+        @"memory-cache", @"disk-cache", @"offline-cache",
+        @"session-storage", @"local-storage", @"indexeddb-databases",
+        @"cookies", @"hsts-cache",
+    ];
+}
+
 - (instancetype)initWithLine:(NSString *)line {
     self = [super init];
     if (self) {

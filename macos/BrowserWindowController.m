@@ -592,9 +592,12 @@ static const CGFloat kStatusHeight = 24.0;
             @"cookies": WKWebsiteDataTypeCookies,
             @"disk-cache": WKWebsiteDataTypeDiskCache,
             @"memory-cache": WKWebsiteDataTypeMemoryCache,
+            @"offline-cache": WKWebsiteDataTypeOfflineWebApplicationCache,
             @"local-storage": WKWebsiteDataTypeLocalStorage,
             @"session-storage": WKWebsiteDataTypeSessionStorage,
             @"indexeddb-databases": WKWebsiteDataTypeIndexedDBDatabases,
+            // hsts-cache has no public WKWebsiteDataType equivalent -> handled
+            // up in VimbEx as a recognized (no-op) name, not erroring here.
             @"all": WKWebsiteDataTypeCookies,
         };
         for (NSString *t in wanted) {
@@ -741,14 +744,19 @@ static const CGFloat kStatusHeight = 24.0;
         [self exOpen:url newTab:NO];
         return;
     }
-    // qpush / qunshift both add a url. vimb's storage only keeps front/bottom
-    // ordering; push to the front.
+    // GTK bookmark_queue_push appends to the END (util_file_append) while
+    // qunshift prepends to the front (util_file_prepend); qpop pops the front.
+    // That yields FIFO for qpush and LIFO-front for qunshift.
     NSString *url = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (url.length == 0) {
         [self showMessage:[cmd isEqualToString:@"qpush"] ? @"qpush requires a url" : @"qunshift requires a url" error:YES];
         return;
     }
-    [qs prepend:url max:NSUIntegerMax];
+    if ([cmd isEqualToString:@"qpush"]) {
+        [qs append:url];
+    } else { // qunshift
+        [qs prepend:url max:NSUIntegerMax];
+    }
     [self showMessage:[NSString stringWithFormat:@"queued %@", url] error:NO];
 }
 - (void)exShowMessages { [self showMessage:@"no messages" error:NO]; }

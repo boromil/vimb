@@ -31,20 +31,20 @@
     return self.table[scheme];
 }
 
++ (NSString *)expandCommand:(NSString *)command forURI:(NSString *)uri {
+    if ([command containsString:@"%s"]) {
+        return [command stringByReplacingOccurrencesOfString:@"%s" withString:uri];
+    }
+    return [NSString stringWithFormat:@"%@ %@", command, uri];
+}
+
 - (BOOL)handleURI:(NSString *)uri {
     NSString *cmd = [self commandForURI:uri];
     if (!cmd) { return NO; }
 
-    // Substitute the URI for the first '%s', else append it.
-    NSString *expanded = cmd;
-    if ([cmd containsString:@"%s"]) {
-        expanded = [cmd stringByReplacingOccurrencesOfString:@"%s"
-                                                  withString:uri
-                                                     options:0
-                                                       range:[cmd rangeOfString:@"%s"]];
-    } else {
-        expanded = [NSString stringWithFormat:@"%@ %@", cmd, uri];
-    }
+    // Substitute the URI for every '%s' (g_strdup_printf in src/handler.c:73),
+    // else append it.
+    NSString *expanded = [VimbHandler expandCommand:cmd forURI:uri];
 
     // Run via /bin/sh -c (asynchronously) for %s-style command templates.
     NSArray<NSString *> *argv = @[@"/bin/sh", @"-c", expanded];

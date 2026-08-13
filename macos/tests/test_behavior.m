@@ -561,6 +561,12 @@ static void test_ex_every_type(void) {
     TEST_ASSERT_TRUE([a.calls containsObject:@"cleardata:"]);
     [ex runCommand:@"cleardata cookies,disk-cache"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"cleardata:cookies,disk-cache"]);
+    // Unknown type -> error message + keep-input (no clear dispatch).
+    [ex runCommand:@"cleardata bogus-type"];
+    NSUInteger cleardataCallsBefore = 0;
+    for (NSString *c in a.calls) { if ([c hasPrefix:@"cleardata:"]) cleardataCallsBefore++; }
+    TEST_ASSERT_EQ_I((NSInteger)cleardataCallsBefore, 2); // unchanged (still 2)
+    TEST_ASSERT_TRUE([a.calls containsObject:@"msg:1:unknown data type(s): bogus-type"]);
     [ex runCommand:@"hardcopy"];
     TEST_ASSERT_TRUE([a.calls containsObject:@"hardcopy"]);
 
@@ -895,6 +901,18 @@ static void test_handler_handle_uri_returns(void) {
     // Register a harmless handler; handleURI returns YES.
     TEST_ASSERT_TRUE([h addScheme:@"vhb" command:@"/usr/bin/true %s"]);
     TEST_ASSERT_TRUE([h handleURI:@"vhb:xyz"] == YES);
+}
+
+// Every '%s' is substituted (g_strdup_printf parity); no '%s' -> append.
+static void test_handler_expand_all_s(void) {
+    TEST_ASSERT_EQ_STR([VimbHandler expandCommand:@"open -a Mail %s" forURI:@"mailto:a@b"],
+                       @"open -a Mail mailto:a@b");
+    // Two '%s' -> both replaced.
+    TEST_ASSERT_EQ_STR([VimbHandler expandCommand:@"echo %s %s" forURI:@"u"],
+                       @"echo u u");
+    // No '%s' -> append with one space.
+    TEST_ASSERT_EQ_STR([VimbHandler expandCommand:@"open" forURI:@"u"],
+                       @"open u");
 }
 
 #pragma mark - VimController coverage
@@ -1765,6 +1783,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_user_script_style_gating);
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
+    RUN_TEST(test_handler_expand_all_s);
     RUN_TEST(test_editor_round_trip);
     RUN_TEST(test_editor_async_readback);
 

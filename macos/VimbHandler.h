@@ -4,7 +4,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 // External URI-scheme handlers, ported from src/handler.c. Maps a scheme
 // (before the first ':') to a command template; the URI is substituted for
-// the first '%s' (or appended) and run via the shell.
+// every '%s' (g_strdup_printf, src/handler.c:73) or appended when no '%s' is
+// present, and run via the shell.
 @interface VimbHandler : NSObject
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *table;
 - (instancetype)init;
@@ -14,6 +15,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSString *)commandForURI:(NSString *)uri;
 // Run the handler for a URI if one is registered. Returns YES if handled.
 - (BOOL)handleURI:(NSString *)uri;
+// Pure expansion of a handler command template (every '%s' -> uri; append uri
+// if no '%s'). Exposed for testing (parity with g_strdup_printf).
++ (NSString *)expandCommand:(NSString *)command forURI:(NSString *)uri;
 // All registered schemes (for completion).
 - (NSArray<NSString *> *)schemes;
 @end
