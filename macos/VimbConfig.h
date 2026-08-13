@@ -61,6 +61,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)getBool:(NSString *)name defaultValue:(BOOL)dv;
 - (NSInteger)getInt:(NSString *)name defaultValue:(NSInteger)dv;
 - (NSString *)getString:(NSString *)name defaultValue:(NSString *)dv;
+// Validate a setting value against the GTK setter constraints (cookie-accept,
+// geolocation, notification, hardware-acceleration-policy, download-path).
+// Returns YES when the value may be applied. Exposed for the :set path (which
+// echoes an error + keeps input) and unit tests.
+- (BOOL)validateSetting:(NSString *)name value:(id)value;
 
 // Shortcuts (e.g. "dd" -> "https://duckduckgo.com/?q=$0")
 - (nullable NSString *)resolveShortcut:(NSString *)input;

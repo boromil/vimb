@@ -233,6 +233,35 @@ static void test_config_apply_setting_getters(void) {
     [c loadDefaults]; // restore
 }
 
+// Setting-value validation mirrors the GTK setters (setting.c).
+static void test_config_validate_setting(void) {
+    VimbConfig *c = [VimbConfig shared];
+    [c loadDefaults];
+
+    // cookie-accept in [always, origin, never].
+    TEST_ASSERT_TRUE([c validateSetting:@"cookie-accept" value:@"always"]);
+    TEST_ASSERT_TRUE([c validateSetting:@"cookie-accept" value:@"origin"]);
+    TEST_ASSERT_TRUE([c validateSetting:@"cookie-accept" value:@"never"]);
+    TEST_ASSERT_FALSE([c validateSetting:@"cookie-accept" value:@"banana"]);
+
+    // geolocation / notification in [always, ask, never].
+    TEST_ASSERT_TRUE([c validateSetting:@"geolocation" value:@"ask"]);
+    TEST_ASSERT_FALSE([c validateSetting:@"geolocation" value:@"sometimes"]);
+    TEST_ASSERT_TRUE([c validateSetting:@"notification" value:@"never"]);
+    TEST_ASSERT_FALSE([c validateSetting:@"notification" value:@"maybe"]);
+
+    // hardware-acceleration-policy in [always, ondemand, never].
+    TEST_ASSERT_TRUE([c validateSetting:@"hardware-acceleration-policy" value:@"ondemand"]);
+    TEST_ASSERT_FALSE([c validateSetting:@"hardware-acceleration-policy" value:@"fast"]);
+
+    // download-path must be absolute.
+    TEST_ASSERT_TRUE([c validateSetting:@"download-path" value:@"/tmp/x"]);
+    TEST_ASSERT_FALSE([c validateSetting:@"download-path" value:@"relative/dir"]);
+
+    // Unknown settings always validate.
+    TEST_ASSERT_TRUE([c validateSetting:@"scroll-step" value:@"40"]);
+}
+
 static void test_config_search_engine(void) {
     VimbConfig *c = [VimbConfig shared];
     [c loadDefaults];
@@ -852,6 +881,7 @@ int main(void) {
     RUN_TEST(test_storage_dirs);
     RUN_TEST(test_config_load_defaults);
     RUN_TEST(test_config_apply_setting_getters);
+    RUN_TEST(test_config_validate_setting);
     RUN_TEST(test_config_search_engine);
     RUN_TEST(test_config_mappings);
     RUN_TEST(test_config_convert_key_string);

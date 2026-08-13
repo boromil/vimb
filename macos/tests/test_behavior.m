@@ -427,21 +427,39 @@ static void test_config_convert_edge_cases(void) {
 
 #pragma mark - VimbEngine coverage
 
+static void test_engine_register_append(void) {
+    VimbRegisters *r = [[VimbRegisters alloc] init];
+    // Lowercase overwrites.
+    [r set:@"one" forKey:'a'];
+    [r set:@"two" forKey:'a'];
+    TEST_ASSERT_EQ_STR([r get:'a'], @"two");
+    // Uppercase register appends to the lowercase equivalent (vb_register_add).
+    [r set:@"three" forKey:'A'];
+    TEST_ASSERT_EQ_STR([r get:'a'], @"two\nthree");
+    [r set:@"four" forKey:'A'];
+    TEST_ASSERT_EQ_STR([r get:'a'], @"two\nthree\nfour");
+    // Uppercase with no existing lower -> stores directly.
+    [r set:@"x" forKey:'B'];
+    TEST_ASSERT_EQ_STR([r get:'b'], @"x");
+}
+
 static void test_engine_global_mark_trim(void) {
     VimbMarks *marks = [[VimbMarks alloc] init];
-    for (unichar i = '0'; i <= '9'; i++) {
-        [marks setGlobal:i uri:[NSString stringWithFormat:@"u%c", i]];
-    }
-    // 10 marks, the oldest ('0') pruned when adding an 11th.
-    [marks setGlobal:'x' uri:@"ux"];
-    TEST_ASSERT_TRUE([marks getGlobal:'0'] == nil);
-    TEST_ASSERT_EQ_STR([marks getGlobal:'9'], @"u9");
-    TEST_ASSERT_EQ_STR([marks getGlobal:'x'], @"ux");
-    // Re-setting an existing key moves it to front without growing beyond 10.
-    [marks setGlobal:'9' uri:@"u9new"];
-    TEST_ASSERT_EQ_STR([marks getGlobal:'9'], @"u9new");
-    // Setting a key that already exists keeps count <= 10 (no removal of 9).
-    TEST_ASSERT_TRUE([marks getGlobal:'9'] != nil);
+    // Global marks are uppercase A..Z (GLOBAL_MARK_CHARS) with no cap: each
+    // letter is addressed independently and overwritten in place.
+    [marks setGlobal:'A' uri:@"uA"];
+    [marks setGlobal:'Z' uri:@"uZ"];
+    TEST_ASSERT_EQ_STR([marks getGlobal:'A'], @"uA");
+    TEST_ASSERT_EQ_STR([marks getGlobal:'Z'], @"uZ");
+    // Unset mark -> nil (never silently '0').
+    TEST_ASSERT_TRUE([marks getGlobal:'B'] == nil);
+    // Overwrite in place.
+    [marks setGlobal:'A' uri:@"uAnew"];
+    TEST_ASSERT_EQ_STR([marks getGlobal:'A'], @"uAnew");
+    // All 26 letters addressable (no arbitrary prune).
+    for (unichar c = 'A'; c <= 'Z'; c++) { [marks setGlobal:c uri:[NSString stringWithFormat:@"%c", c]]; }
+    TEST_ASSERT_EQ_STR([marks getGlobal:'A'], @"A");
+    TEST_ASSERT_EQ_STR([marks getGlobal:'Z'], @"Z");
 }
 
 #pragma mark - VimbAutocmd coverage
@@ -1147,13 +1165,13 @@ static void test_controller_gcmd(void) {
     feed(vc, @"gU"); TEST_ASSERT_TRUE([spy.calls containsObject:@"gohomeurl"]);
     feed(vc, @"g"); feed(vc, @";"); feed(vc, @"w"); TEST_ASSERT_TRUE([spy.calls containsObject:@"toggleshints"]);
 
-    // A g sub-command with no handler still consumes the keys (error converted
-    // to a completed result by the parser).
+    // A g sub-command with no handler (g<unknown>) returns RESULT_ERROR, so the
+    // key is NOT consumed and bubbles to the page (GTK normal_keypress contract).
     vc = newVc(spy);
     BOOL r = [vc handleKeyCode:0 modifiers:0 characters:S('g')];
-    TEST_ASSERT_TRUE(r);
+    TEST_ASSERT_TRUE(r);   // 'g' is consumed (waiting for key2)
     r = [vc handleKeyCode:0 modifiers:0 characters:S('x')];
-    TEST_ASSERT_TRUE(r);
+    TEST_ASSERT_FALSE(r);  // 'gx' has no command -> passes through
 }
 
 static void test_controller_prevnext_and_scroll_keys(void) {
@@ -1770,6 +1788,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_config_settings_defaults_parity);
     RUN_TEST(test_config_convert_edge_cases);
 
+    RUN_TEST(test_engine_register_append);
     RUN_TEST(test_engine_global_mark_trim);
     RUN_TEST(test_autocmd_every_event_and_download);
     RUN_TEST(test_autocmd_remove_and_group);

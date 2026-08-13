@@ -396,7 +396,7 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         if (r == HBResultComplete || r == HBResultError) {
             [self resetParserAfterDispatch];
         }
-        return r==HBResultError ? HBResultComplete : r;
+        return r;
     }
 
     return res;
@@ -582,7 +582,9 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
         return HBResultComplete;
     }
     if ([name isEqualToString:@"prevnext"]) {
-        return HBResultError; // not implemented in the original shell either
+        // GTK normal_prevnext (src/normal.c:760-776) returns RESULT_COMPLETE
+        // (the hint follow-link body is #if 0), so the key is consumed.
+        return HBResultComplete;
     }
     if ([name isEqualToString:@"g_cmd"]) {
         return [self invokeGCmd:c k2:k2 k3:k3 cnt:cnt delegate:d];

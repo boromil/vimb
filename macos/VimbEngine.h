@@ -23,7 +23,7 @@ typedef NS_ENUM(NSInteger, VSettingType) { VSettingBool, VSettingInt, VSettingCh
 // local marks: 'a..'z mapped to scroll-top in doc (pixel)
 - (void)setLocal:(unichar)c top:(double)top;
 - (double)getLocal:(unichar)c;
-// global marks: '0..'9 mapped to URI
+// global marks: uppercase 'A'..'Z mapped to URI (GLOBAL_MARK_CHARS, no cap)
 - (void)setGlobal:(unichar)c uri:(NSString *_Nullable)uri;
 - (nullable NSString *)getGlobal:(unichar)c;
 @end

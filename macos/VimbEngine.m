@@ -18,6 +18,18 @@
 }
 - (instancetype)init { self = [super init]; if (self) { _regs = [NSMutableDictionary dictionary]; } return self; }
 - (void)set:(NSString *)text forKey:(unichar)key {
+    // Uppercase register ('"Ay) appends to the lowercase register with a \n
+    // separator (vb_register_add, src/main.c:621-640).
+    if (key >= 'A' && key <= 'Z') {
+        NSString *lower = [NSString stringWithCharacters:(unichar[]){key + 32} length:1];
+        NSString *existing = _regs[lower];
+        if (existing.length) {
+            _regs[lower] = [NSString stringWithFormat:@"%@\n%@", existing, text ?: @""];
+            return;
+        }
+        _regs[lower] = text ?: @"";
+        return;
+    }
     _regs[[NSString stringWithCharacters:&key length:1]] = text;
 }
 - (NSString *)get:(unichar)key {
@@ -28,11 +40,10 @@
 @implementation VimbMarks {
     NSMutableDictionary<NSString *, NSNumber *> *_local;
     NSMutableDictionary<NSString *, NSString *> *_global;
-    NSMutableArray<NSString *> *_globalOrder; // most-recent '0 first
 }
 - (instancetype)init {
     self = [super init];
-    if (self) { _local = [NSMutableDictionary dictionary]; _global = [NSMutableDictionary dictionary]; _globalOrder = [NSMutableArray array]; }
+    if (self) { _local = [NSMutableDictionary dictionary]; _global = [NSMutableDictionary dictionary]; }
     return self;
 }
 - (void)setLocal:(unichar)c top:(double)top {
@@ -41,17 +52,12 @@
 - (double)getLocal:(unichar)c {
     return [_local[[NSString stringWithCharacters:&c length:1]] doubleValue];
 }
+// Global marks are uppercase letters 'A'..'Z (GLOBAL_MARK_CHARS, src/main.h:66)
+// with no cap: setting a letter overwrites/replaces it exactly as GTK's
+// global_marks[] does.
 - (void)setGlobal:(unichar)c uri:(NSString *)uri {
-    NSString *k = [NSString stringWithCharacters:&c length:1];
     if (uri) {
-        _global[k] = uri;
-        [_globalOrder removeObject:k];
-        [_globalOrder insertObject:k atIndex:0];
-        if (_globalOrder.count > 10) {
-            NSString *old = _globalOrder.lastObject;
-            [_globalOrder removeLastObject];
-            [_global removeObjectForKey:old];
-        }
+        _global[[NSString stringWithCharacters:&c length:1]] = uri;
     }
 }
 - (NSString *)getGlobal:(unichar)c {

@@ -433,6 +433,13 @@ static const CGFloat kStatusHeight = 24.0;
             [self showMessage:[NSString stringWithFormat:@"%@ = %@", name, cur ?: @"unset"] error:NO];
             return;
         }
+        // Validate string-polisted settings (GTK setters reject bad values and
+        // keep the input for correction — setting.c cookie_accept/geolocation/
+        // notification/hardware_acceleration_policy/download_path).
+        if (![cfg validateSetting:name value:val]) {
+            [self showMessage:[NSString stringWithFormat:@"invalid value for %@", name] error:YES];
+            return;
+        }
         NSNumber *num = @(val.doubleValue);
         [cfg applySetting:name value:num];
     } else {

@@ -196,6 +196,26 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
          value:value];
 }
 
+// Enforces the GTK setter constraints (setting.c) for the settings that carry
+// them; unknown settings pass through. Values are the NSString form the :set
+// path produces, or NSNumber for booleans/ints.
+- (BOOL)validateSetting:(NSString *)name value:(id)value {
+    NSString *s = [value isKindOfClass:[NSString class]] ? value : [value description];
+    if ([name isEqualToString:@"cookie-accept"]) {
+        return [s isEqualToString:@"always"] || [s isEqualToString:@"origin"] || [s isEqualToString:@"never"];
+    }
+    if ([name isEqualToString:@"geolocation"] || [name isEqualToString:@"notification"]) {
+        return [s isEqualToString:@"always"] || [s isEqualToString:@"ask"] || [s isEqualToString:@"never"];
+    }
+    if ([name isEqualToString:@"hardware-acceleration-policy"]) {
+        return [s isEqualToString:@"ondemand"] || [s isEqualToString:@"always"] || [s isEqualToString:@"never"];
+    }
+    if ([name isEqualToString:@"download-path"]) {
+        return [s hasPrefix:@"/"];
+    }
+    return YES;
+}
+
 - (nullable NSString *)resolveShortcut:(NSString *)input {
     NSString *s = self.shortcuts[input];
     if (!s) { return nil; }
