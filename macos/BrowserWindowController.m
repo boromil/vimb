@@ -208,6 +208,12 @@ static const CGFloat kStatusHeight = 24.0;
 - (void)newTabInWindow {
     KeyboardWebView *wv = [[KeyboardWebView alloc] initWithFrame:self.webContainer.bounds];
     wv.vbDelegate = self;
+    // Apply the default-zoom setting to new web views (parity: GTK applies
+    // web-view zoom-level on creation; zz also resets to this value).
+    NSInteger zoom = [[VimbConfig shared] getInt:@"default-zoom" defaultValue:100];
+    if (zoom > 0 && zoom != 100) {
+        wv.magnification = (CGFloat)zoom / 100.0;
+    }
     VimbTab *tab = [[VimbTab alloc] initWithWebView:wv];
     [self.tabs addObject:tab];
     [self setActiveTab:tab];
