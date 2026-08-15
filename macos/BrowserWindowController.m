@@ -13,8 +13,6 @@
 #import "CompletionDropdown.h"
 #import "CompletionCandidate.h"
 
-static const CGFloat kStatusHeight = 24.0;
-
 @interface BrowserWindowController () <VimDelegate, KeyboardWebViewDelegate, NSTextFieldDelegate, VimbExActor, VimbCommandFieldDelegate>
 @property(nonatomic, strong) VimController *vim;
 @property(nonatomic, strong) VimbEx *exEngine;
@@ -31,6 +29,7 @@ static const CGFloat kStatusHeight = 24.0;
 
 @property(nonatomic, strong) NSStackView *tabBar;
 @property(nonatomic, strong) NSMutableArray<NSButton *> *tabButtons;
+@property(nonatomic, strong) NSButton *addTabButton;
 @property(nonatomic, strong) NSView *webContainer;
 @property(nonatomic, strong) VimbCommandField *commandField;
 @property(nonatomic, strong) CompletionDropdown *completionDropdown;
@@ -119,8 +118,12 @@ static const CGFloat kStatusHeight = 24.0;
     self.tabBar = [NSStackView stackViewWithViews:@[]];
     self.tabBar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     self.tabBar.alignment = NSLayoutAttributeCenterY;
-    self.tabBar.spacing = 4;
+    self.tabBar.spacing = 6;
     self.tabBar.edgeInsets = NSEdgeInsetsMake(4, 8, 4, 8);
+    // Let the strip hug its content (tabs + new-tab button) rather than
+    // stretching the buttons across the full window width, which produced a
+    // huge dead gap between tabs and an absurdly wide "active" tab.
+    self.tabBar.distribution = NSStackViewDistributionGravityAreas;
     NSView *tabHost = [[NSView alloc] init];
     tabHost.translatesAutoresizingMaskIntoConstraints = NO;
     self.tabBar.translatesAutoresizingMaskIntoConstraints = NO;
@@ -131,11 +134,6 @@ static const CGFloat kStatusHeight = 24.0;
         [self.tabBar.topAnchor constraintEqualToAnchor:tabHost.topAnchor],
         [self.tabBar.bottomAnchor constraintEqualToAnchor:tabHost.bottomAnchor],
     ]];
-    NSButton *newBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:@"New Tab"]
-                                          target:self action:@selector(newTabAction:)];
-    newBtn.bezelStyle = NSBezelStyleTexturedRounded;
-    newBtn.imagePosition = NSImageOnly;
-    [self.tabBar addArrangedSubview:newBtn];
 
     [v addArrangedSubview:tabHost];
 
@@ -153,9 +151,9 @@ static const CGFloat kStatusHeight = 24.0;
     cmdField.delegate = self;
     self.commandField = cmdField;
     self.commandField.delegate = self;
-    self.commandField.font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
+    self.commandField.font = [NSFont systemFontOfSize:14 weight:NSFontWeightRegular];
     self.commandField.bezelStyle = NSTextFieldRoundedBezel;
-    self.commandField.controlSize = NSControlSizeSmall;
+    self.commandField.controlSize = NSControlSizeRegular;
     self.commandField.alphaValue = 0.0;
     self.commandField.translatesAutoresizingMaskIntoConstraints = NO;
     [self.webContainer addSubview:self.commandField];
@@ -179,9 +177,9 @@ static const CGFloat kStatusHeight = 24.0;
 
     [NSLayoutConstraint activateConstraints:@[
         [self.commandField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:10],
-        [self.commandField.trailingAnchor constraintLessThanOrEqualToAnchor:self.webContainer.trailingAnchor constant:-120],
+        [self.commandField.trailingAnchor constraintEqualToAnchor:self.webContainer.trailingAnchor constant:-12],
         [self.commandField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-8],
-        [self.commandField.heightAnchor constraintEqualToConstant:kStatusHeight],
+        [self.commandField.heightAnchor constraintEqualToConstant:28],
         [self.statusField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:12],
         [self.statusField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-4],
         [self.settingsIndicator.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.statusField.trailingAnchor constant:8],
@@ -290,34 +288,64 @@ static const CGFloat kStatusHeight = 24.0;
 }
 
 - (void)rebuildTabBar {
-    for (NSButton *b in self.tabButtons) {
-        // removeArrangedSubview only removes the view from the arranged list;
-        // the button must also be removed from the view hierarchy, otherwise
-        // buttons pile up (and their constraints accumulate) on every rebuild.
-        [self.tabBar removeArrangedSubview:b];
-        [b removeFromSuperview];
+    // Clear every arranged subview (tabs AND the trailing new-tab button) so
+    // the "+" stays grouped right after the last tab instead of drifting.
+    for (NSView *sub in self.tabBar.arrangedSubviews.copy) {
+        [self.tabBar removeArrangedSubview:sub];
+        [sub removeFromSuperview];
     }
     [self.tabButtons removeAllObjects];
+
     NSUInteger activeIdx = self.activeTab ? [self.tabs indexOfObject:self.activeTab] : NSNotFound;
     for (NSUInteger i = 0; i < self.tabs.count; i++) {
         VimbTab *t = self.tabs[i];
         NSString *title = [t.title length] ? t.title : @"New Tab";
         NSButton *b = [NSButton buttonWithTitle:title target:self action:@selector(tabButtonClicked:)];
         b.tag = (NSInteger)i;
-        b.bezelStyle = NSBezelStyleInline;
-        b.font = [NSFont systemFontOfSize:11];
-        b.controlSize = NSControlSizeSmall;
-        if (i == activeIdx) {
-            b.state = NSControlStateValueOn;
-            b.contentTintColor = [NSColor controlAccentColor];
-        }
+        // Borderless: we draw the tab background ourselves via the layer, so
+        // the native bezel can't paint over it (TexturedRounded ignored
+        // bezelColor and made the active/inactive backgrounds invisible).
+        b.bordered = NO;
+        b.buttonType = NSButtonTypeMomentaryPushIn;
+        b.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+        b.controlSize = NSControlSizeRegular;
+        b.imagePosition = NSNoImage;
         b.lineBreakMode = NSLineBreakByTruncatingTail;
-        NSLayoutConstraint *w = [b.widthAnchor constraintLessThanOrEqualToConstant:150];
+        // Cap each tab width so long titles truncate instead of pushing the
+        // strip wide, and require the button to hug its own contents so the
+        // stack lays tabs out left-to-right with no dead gap between them.
+        [b setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+        [b setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+        NSLayoutConstraint *w = [b.widthAnchor constraintLessThanOrEqualToConstant:180];
         w.priority = NSLayoutPriorityDefaultHigh;
         [NSLayoutConstraint activateConstraints:@[w]];
+        // Draw the rounded background via the layer (works reliably on a
+        // bordered=NO button). Active = solid accent, inactive = subtle gray.
+        b.wantsLayer = YES;
+        b.layer.cornerRadius = 5.0;
+        b.layer.masksToBounds = YES;
+        if (i == activeIdx) {
+            b.layer.backgroundColor = [NSColor controlAccentColor].CGColor;
+            b.contentTintColor = [NSColor whiteColor];
+        } else {
+            b.layer.backgroundColor = [NSColor colorWithWhite:0.5 alpha:0.20].CGColor;
+            b.contentTintColor = [NSColor labelColor];
+        }
         [self.tabBar addArrangedSubview:b];
         [self.tabButtons addObject:b];
     }
+
+    // New-tab button grouped right after the last tab (Safari-style trailing
+    // "+", but kept adjacent to the strip rather than stranded at the edge).
+    if (!self.addTabButton) {
+        self.addTabButton = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:@"New Tab"]
+                                               target:self action:@selector(newTabAction:)];
+        self.addTabButton.bordered = NO;
+        self.addTabButton.buttonType = NSButtonTypeMomentaryPushIn;
+        self.addTabButton.imagePosition = NSImageOnly;
+        self.addTabButton.contentTintColor = [NSColor labelColor];
+    }
+    [self.tabBar addArrangedSubview:self.addTabButton];
 }
 
 #pragma mark - Loading
@@ -364,11 +392,13 @@ static const CGFloat kStatusHeight = 24.0;
             return [self.exEngine runCommand:rest];
         case '/':
             [self.activeTab.webView findString:rest forwardDirection:YES];
-            [[VimbConfig shared].searchStore prepend:rest max:100];
+            if (rest.length) { [[VimbConfig shared].searchStore prepend:rest max:100]; }
+            [self showMessage:[NSString stringWithFormat:@"Search: %@", rest] error:NO];
             return VimbExCmdResultSuccess;
         case '?':
             [self.activeTab.webView findString:rest forwardDirection:NO];
-            [[VimbConfig shared].searchStore prepend:rest max:100];
+            if (rest.length) { [[VimbConfig shared].searchStore prepend:rest max:100]; }
+            [self showMessage:[NSString stringWithFormat:@"Search (backward): %@", rest] error:NO];
             return VimbExCmdResultSuccess;
         default:
             // open/find without a prompt char (e.g. from o/O).
@@ -920,12 +950,18 @@ static const CGFloat kStatusHeight = 24.0;
 }
 
 - (void)showCommandLine {
+    // Focus the field immediately (not after the fade completes) so the first
+    // keystroke lands in the command line and not the webview, then position
+    // the caret at the end of any seeded prompt (":", "/", "?").
+    [self.window makeFirstResponder:self.commandField];
+    NSText *editor = [self.commandField currentEditor];
+    if (editor) {
+        [editor setSelectedRange:NSMakeRange(editor.string.length, 0)];
+    }
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
         ctx.duration = 0.15;
         self.commandField.alphaValue = 1.0;
-    } completionHandler:^{
-        [self.window makeFirstResponder:self.commandField];
-    }];
+    } completionHandler:nil];
 }
 
 - (void)hideCommandLine {
@@ -1188,8 +1224,16 @@ static const CGFloat kStatusHeight = 24.0;
     self.commandPrefix = prompt;
     self.exHistorySnapshot = @[];
     self.exHistoryIndex = -1;
+    // Seed the prompt character (":", "/", "?") into the field for parity with
+    // GTK vb_enter_prompt(print_prompt=TRUE). "open "/"tabopen " (o/O/t/T) and
+    // ";" hint prompts prefill their full command text instead. Keeping the
+    // prompt in the field makes incsearch + completion (which key off the
+    // leading char) work and restores the visual cue of forward vs. backward
+    // search vs. ex-command.
     if ([prompt hasPrefix:@"open "] || [prompt hasPrefix:@"tabopen "]) {
-        // o/t prefills the command line with the open prefix.
+        self.commandField.stringValue = prompt;
+    } else if (prompt.length == 1 &&
+               ([prompt isEqualToString:@":"] || [prompt isEqualToString:@"/"] || [prompt isEqualToString:@"?"])) {
         self.commandField.stringValue = prompt;
     } else {
         self.commandField.stringValue = @"";
@@ -1686,9 +1730,10 @@ static const CGFloat kStatusHeight = 24.0;
             NSString *line = self.commandField.stringValue;
             VimMode m = self.vim.mode;
             [self.completionDropdown dismiss];
-            VimbExCmdResult res = VimbExCmdResultError;
-            if (m == VimModeCommand) { res = [self commandLineExecuted:line]; }
-            else if (m == VimModeSearch) { [self.vim commandLineCommitted:line]; }
+            // Route both command (":") and search ("/", "?") lines through the
+            // same executor so search also records history and strips its
+            // leading prompt char (parity with GTK ex_input / command_search).
+            VimbExCmdResult res = [self commandLineExecuted:line];
             [self.vim reset];
             if ((res & VimbExCmdResultKeepInput) && m == VimModeCommand) {
                 // GTK CMD_KEEPINPUT: keep the typed command in the input box
@@ -1771,6 +1816,15 @@ static const CGFloat kStatusHeight = 24.0;
     if (self.exHistoryIndex < 0) { self.exHistoryIndex = 0; }
     if (self.exHistoryIndex >= (NSInteger)hist.count) { self.exHistoryIndex = (NSInteger)hist.count - 1; }
     NSString *line = hist[self.exHistoryIndex];
+    // History entries are stored WITHOUT their prompt char (command history
+    // drops ":", search history drops "/"/"?"), but the live field carries the
+    // seeded prompt. Re-apply it so the recalled line routes correctly.
+    if (m == VimModeSearch) {
+        NSString *p = self.commandPrefix.length == 1 ? self.commandPrefix : @"/";
+        if (![line hasPrefix:p]) { line = [p stringByAppendingString:line]; }
+    } else if (![line hasPrefix:@":"]) {
+        line = [@":" stringByAppendingString:line];
+    }
     self.commandField.stringValue = line;
 }
 
@@ -1955,9 +2009,10 @@ static const CGFloat kStatusHeight = 24.0;
     self.commandField.stringValue = completed;
     VimMode m = self.vim.mode;
     [self.completionDropdown dismiss];
-    VimbExCmdResult res = VimbExCmdResultError;
-    if (m == VimModeCommand) { res = [self commandLineExecuted:completed]; }
-    else if (m == VimModeSearch) { [self.vim commandLineCommitted:completed]; }
+    // Unified executor (parity with the plain-Enter path): search and command
+    // both run through commandLineExecuted so the prompt char is stripped and
+    // search history is recorded consistently.
+    VimbExCmdResult res = [self commandLineExecuted:completed];
     [self.vim reset];
     if ((res & VimbExCmdResultKeepInput) && m == VimModeCommand) {
         [self.window makeFirstResponder:self.commandField];
