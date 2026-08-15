@@ -459,7 +459,29 @@ static void test_ex_commands_and_names(void) {
     VimbEx *ex = [[VimbEx alloc] init];
     NSArray<NSString *> *names = [ex commandNames];
     TEST_ASSERT_TRUE(names.count > 0);
+    // % is not a vimb ex rhs placeholder (vim-only); it passes through.
     TEST_ASSERT_EQ_STR([ex expandToken:@"%"], @"%");
+}
+
+// ~ and $ path/env expansion (parity with util_parse_expansion for the
+// EX_FLAG_EXP commands save/shellcmd/shellex/source).
+static void test_ex_parser_path_expansion(void) {
+    NSString *home = NSHomeDirectory();
+    TEST_ASSERT_EQ_STR([VimbExParser expandPathVariableInString:@"~/x"],
+                       [home stringByAppendingString:@"/x"]);
+    // lone ~ at end resolves to home.
+    TEST_ASSERT_EQ_STR([VimbExParser expandPathVariableInString:@"~"], home);
+    // $VAR / ${VAR} via the environment.
+    TEST_ASSERT_EQ_STR([VimbExParser expandPathVariableInString:@"$HOME"],
+                       home);
+    TEST_ASSERT_EQ_STR([VimbExParser expandPathVariableInString:@"${HOME}"],
+                       home);
+    // unknown $VAR expands to empty (parity with util_parse_expansion).
+    TEST_ASSERT_EQ_STR([VimbExParser expandPathVariableInString:@"$NOPE_SETTING"], @"");
+    // backslash escapes a literal ~ / $.
+    TEST_ASSERT_EQ_STR([VimbExParser expandPathVariableInString:@"\\$HOME"], @"$HOME");
+    // % passes through untouched.
+    TEST_ASSERT_EQ_STR([VimbExParser expandPathVariableInString:@"%"], @"%");
 }
 
 static void test_ex_url_fallback(void) {
@@ -920,6 +942,7 @@ int main(void) {
     RUN_TEST(test_ex_set_and_unknown);
     RUN_TEST(test_ex_map_command);
     RUN_TEST(test_ex_commands_and_names);
+    RUN_TEST(test_ex_parser_path_expansion);
     RUN_TEST(test_ex_url_fallback);
     RUN_TEST(test_ex_shortcut_and_bang);
     RUN_TEST(test_ex_parser_arg);

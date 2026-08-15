@@ -42,6 +42,13 @@ NS_ASSUME_NONNULL_BEGIN
 // window controller; keeps the name set in one place.
 + (NSArray<NSString *> *)cleardataTypeNames;
 
+// Port of src/util.c util_parse_expansion for tilde (~, ~/, ~user) and dollar
+// ($VAR, ${VAR}) expansion with backslash escaping. Applied to ex-command rhs
+// for commands carrying EX_FLAG_EXP (save, shellcmd, shellex, source).
+// Foundation-only and deterministic (no passwd lookup: ~user falls through to
+// the literal text, ~ and ~/ resolve via the HOME environment variable).
++ (NSString *)expandPathVariableInString:(NSString *)s;
+
 @end
 
 NS_ASSUME_NONNULL_END

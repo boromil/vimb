@@ -53,7 +53,10 @@ static NSString *TypeForName(NSString *name) {
 }
 
 - (NSString *)expandToken:(NSString *)token {
-    return token; // %/# expansion handled by caller with page context
+    // %/# page-context expansion is handled by the caller (BrowserWindowController)
+    // via the current page URI; ~ and $ env/path expansion is done by the parser
+    // for EX_FLAG_EXP commands before dispatch.
+    return [VimbExParser expandPathVariableInString:token];
 }
 
 - (VimbExCmdResult)runCommand:(NSString *)raw {
@@ -159,7 +162,12 @@ static NSString *TypeForName(NSString *name) {
         return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"handler"]) { return [self handleHandlerCommand:full arg:arg actor:a]; }
-    if ([type isEqualToString:@"save"]) { [a exSavePage:arg.length ? arg : nil]; return VimbExCmdResultSuccess | VimbExCmdResultKeepInput; }
+    if ([type isEqualToString:@"save"]) {
+        // EX_FLAG_EXP: expand ~ and $ path placeholders (parse_rhs parity).
+        NSString *expanded = arg.length ? [VimbExParser expandPathVariableInString:arg] : nil;
+        [a exSavePage:expanded];
+        return VimbExCmdResultSuccess | VimbExCmdResultKeepInput;
+    }
     if ([type isEqualToString:@"register"]) { [a exRegisterList]; return VimbExCmdResultSuccess | VimbExCmdResultKeepInput; }
     if ([type isEqualToString:@"autocmd"]) {
         VimbAutocmd *au = [VimbConfig shared].autocmd;
@@ -180,7 +188,9 @@ static NSString *TypeForName(NSString *name) {
     if ([type isEqualToString:@"map"]) { return [self handleMapCommand:full arg:arg]; }
     if ([type isEqualToString:@"unmap"]) { return [self handleUnmapCommand:full arg:arg]; }
     if ([type isEqualToString:@"source"]) {
-        [a exSource:arg];
+        // EX_FLAG_EXP: expand ~ and $ in the file path before sourcing.
+        NSString *expanded = arg.length ? [VimbExParser expandPathVariableInString:arg] : nil;
+        [a exSource:expanded];
         return VimbExCmdResultSuccess;
     }
     if ([type isEqualToString:@"shortcut"]) { return [self handleShortcutCommand:full arg:arg actor:a]; }
@@ -199,7 +209,9 @@ static NSString *TypeForName(NSString *name) {
     if ([type isEqualToString:@"shell"]) {
         // GTK ex_shellcmd: the sync (non-bang) form returns CMD_SUCCESS|KEEPINPUT
         // (the :! invocation is async -> plain CMD_SUCCESS).
-        [a exShell:arg async:bang];
+        // EX_FLAG_EXP: expand ~ and $ before the shell executes.
+        NSString *expanded = arg.length ? [VimbExParser expandPathVariableInString:arg] : arg;
+        [a exShell:expanded async:bang];
         return bang ? VimbExCmdResultSuccess
                     : (VimbExCmdResultSuccess | VimbExCmdResultKeepInput);
     }

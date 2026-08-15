@@ -147,6 +147,88 @@ static NSUInteger cmdsCount(void) {
     ];
 }
 
+// Port of src/util.c util_parse_expansion restricted to the tilde + dollar
+// modes ex.c's parse_rhs enables for EX_FLAG_EXP commands (UTIL_EXP_TILDE |
+// UTIL_EXP_DOLLAR). Backslash escapes literal '~', '$', '\', '|'. ~user is
+// non-portable (no getpwnam on Foundation) so we resolve ~ and ~/ via HOME.
++ (NSString *)expandPathVariableInString:(NSString *)s {
+    if (s.length == 0) { return s; }
+    NSMutableString *out = [NSMutableString string];
+    NSUInteger n = s.length;
+    NSUInteger i = 0;
+    while (i < n) {
+        unichar c = [s characterAtIndex:i];
+        if (c == '~') {
+            // ~/ or lone ~ at end/space boundary -> HOME. ~user falls through
+            // as literal (no passwd database in Foundation).
+            if (i + 1 < n && [s characterAtIndex:i + 1] == '/') {
+                NSString *home = NSHomeDirectory();
+                [out appendString:home];
+                i += 2;
+                // skip the '/' only if nothing/whitespace follows (parity
+                // with util.c: "~/ " -> "/home/user", "~/x" -> "/home/user/x").
+                if (i >= n || [s characterAtIndex:i] == ' ' || [s characterAtIndex:i] == '\t') {
+                    i++;
+                } else {
+                    [out appendString:@"/"];
+                }
+                continue;
+            }
+            // lone ~ (end of string or followed by whitespace)
+            if (i + 1 == n || [s characterAtIndex:i + 1] == ' ' || [s characterAtIndex:i + 1] == '\t') {
+                [out appendString:NSHomeDirectory()];
+                i++;
+                continue;
+            }
+            // ~user or ~something: not expandable without passwd -> literal.
+            [out appendFormat:@"%C", c];
+            i++;
+            continue;
+        } else if (c == '$') {
+            // $VAR or ${VAR}
+            if (i + 1 < n && [s characterAtIndex:i + 1] == '{') {
+                NSUInteger j = i + 2;
+                NSMutableString *vname = [NSMutableString string];
+                while (j < n && [s characterAtIndex:j] != '}') {
+                    [vname appendFormat:@"%C", [s characterAtIndex:j]];
+                    j++;
+                }
+                if (j < n) { j++; } // skip '}'
+                char *env = getenv([vname UTF8String]);
+                if (env) { [out appendString:[NSString stringWithUTF8String:env]]; }
+                i = j;
+                continue;
+            }
+            NSUInteger j = i + 1;
+            NSMutableString *vname = [NSMutableString string];
+            while (j < n) {
+                unichar vc = [s characterAtIndex:j];
+                if (vc == '/' || vc == ' ' || vc == '\t') { break; }
+                [vname appendFormat:@"%C", vc];
+                j++;
+            }
+            char *env = getenv([vname UTF8String]);
+            if (env) { [out appendString:[NSString stringWithUTF8String:env]]; }
+            i = j;
+            continue;
+        } else if (c == '\\' && i + 1 < n) {
+            // Backslash escape: drop the backslash for quoteable chars (~ $ \ |).
+            unichar nx = [s characterAtIndex:i + 1];
+            if (nx == '~' || nx == '$' || nx == '\\' || nx == '|') {
+                [out appendFormat:@"%C", nx];
+                i += 2;
+            } else {
+                [out appendFormat:@"%C", c];
+                i++;
+            }
+            continue;
+        }
+        [out appendFormat:@"%C", c];
+        i++;
+    }
+    return out;
+}
+
 - (instancetype)initWithLine:(NSString *)line {
     self = [super init];
     if (self) {
