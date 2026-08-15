@@ -60,16 +60,33 @@ static NSString *TypeForName(NSString *name) {
 }
 
 - (VimbExCmdResult)runCommand:(NSString *)raw {
+    // GTK ex_run_string loops over '|'-chained commands. Each iteration parses
+    // one command (stopping rhs at an unescaped '|' for non-command-list
+    // commands) and executes it, continuing with the tail from nextCommand.
     id<VimbExActor> a = self.actor;
     if (!a) { return VimbExCmdResultError; }
 
-    NSString *cmdLine = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    if (cmdLine.length == 0) { return VimbExCmdResultError; }
+    NSString *remaining = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (remaining.length == 0) { return VimbExCmdResultError; }
 
-    // Parse the line with the shared ex.c-faithful parser (name resolution,
-    // bang, count, lhs/rhs). The raw remainder is kept for dispatch branches
-    // written against GTK's combined "everything after the name" convention.
-    VimbExArg *parsed = [VimbExParser parseLine:cmdLine];
+    VimbExCmdResult res = VimbExCmdResultSuccess;
+    while (remaining.length > 0) {
+        VimbExArg *parsed = [VimbExParser parseLine:remaining];
+        res = [self executeParsedCommand:parsed originalLine:remaining actor:a];
+        // On error, stop the chain (parity: if (execute(...)) break).
+        if ((res & ~VimbExCmdResultKeepInput) == VimbExCmdResultError) {
+            break;
+        }
+        NSString *next = parsed.nextCommand;
+        if (!next) { break; }
+        remaining = next;
+    }
+    return res;
+}
+
+// Executes a single parsed command line (the body previously inline in
+// runCommand:). `originalLine` is the trimmed line the arg was parsed from.
+- (VimbExCmdResult)executeParsedCommand:(VimbExArg *)parsed originalLine:(NSString *)cmdLine actor:(id<VimbExActor>)a {
     NSString *full = parsed.command;
     if (!full) {
         // macOS-port addition: ":bookmarks" opens the bookmark browser panel.

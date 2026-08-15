@@ -76,6 +76,7 @@ static NSUInteger cmdsCount(void) {
 @property(nonatomic, readwrite, nullable) NSString *rhs;
 @property(nonatomic, readwrite, nullable) NSString *rest;
 @property(nonatomic, readwrite) BOOL unknownCommand;
+@property(nonatomic, readwrite, nullable) NSString *nextCommand;
 @end
 
 // Private instance API used internally (not part of the public header).
@@ -84,8 +85,9 @@ static NSUInteger cmdsCount(void) {
 - (VimbExArg *)parse;
 - (NSString *)parseCommandName;
 - (NSString *)parseLhs;
-- (void)parseRhs;
+- (NSUInteger)parseRhs;
 - (nullable NSString *)trimmedRestFrom:(NSUInteger)index;
+- (nullable NSString *)trimmedSubstringFrom:(NSUInteger)start to:(NSUInteger)end;
 - (BOOL)isDigit:(unichar)c;
 @end
 
@@ -271,6 +273,30 @@ static NSUInteger cmdsCount(void) {
     return [_line substringFromIndex:i];
 }
 
+// Trimmed substring of _line in [start, end), or nil when empty/whitespace.
+- (nullable NSString *)trimmedSubstringFrom:(NSUInteger)start to:(NSUInteger)end {
+    NSUInteger i = start;
+    while (i < end) {
+        unichar c = [_line characterAtIndex:i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            i++;
+        } else {
+            break;
+        }
+    }
+    NSUInteger j = end;
+    while (j > i) {
+        unichar c = [_line characterAtIndex:j - 1];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            j--;
+        } else {
+            break;
+        }
+    }
+    if (j <= i) { return nil; }
+    return [_line substringWithRange:NSMakeRange(i, j - i)];
+}
+
 // ex.c parse_command_name: resolve a possibly-abbreviated name. Consumes the
 // name from the line. Returns the resolved name or nil (sets unknownCommand).
 - (NSString *)parseCommandName {
@@ -332,7 +358,13 @@ static NSUInteger cmdsCount(void) {
         }
     }
 
-    // Record the raw remainder for the combined-arg dispatch convention.
+    // Position where the combined arg (lhs+rhs) starts, for slicing `rest` at a
+    // '|' chain boundary.
+    NSUInteger argStart = _pos;
+
+    // Record the raw remainder for the combined-arg dispatch convention. For
+    // non-command-list commands this must exclude any '|'-chained tail; it is
+    // recomputed below once parseRhs has located the split point.
     _current.rest = [self trimmedRestFrom:_pos];
 
     [self skipWhitespace];
@@ -347,7 +379,16 @@ static NSUInteger cmdsCount(void) {
 
     // parse_rhs
     _isCmdList = (_flags & VimbExFlagCmd) != 0;
-    [self parseRhs];
+    NSUInteger pipePos = [self parseRhs];
+
+    // If rhs terminated at an unescaped '|' (a chained command boundary for
+    // non-command-list commands), re-cut `rest` to that single command and
+    // expose the tail as `nextCommand` so the caller can chain like GTK's
+    // ex_run_string while-loop.
+    if (pipePos != NSUIntegerMax) {
+        _current.rest = [self trimmedSubstringFrom:argStart to:pipePos];
+        _current.nextCommand = [self trimmedRestFrom:pipePos + 1];
+    }
 
     return _current;
 }
@@ -384,21 +425,34 @@ static NSUInteger cmdsCount(void) {
     return out.length ? out : nil;
 }
 
-// ex.c parse_rhs: read to end-of-line, or to '|' if not a command list.
-// Expansion placeholders (~, $, %) are passed through verbatim here; the
-// caller (VimbEx) applies page-context expansion.
-- (void)parseRhs {
-    if (!_isCmdList && (_flags & VimbExFlagRhs) == 0) { return; }
-    if (_pos >= _line.length) { return; }
+// ex.c parse_rhs: read to end-of-line, or to an unescaped '|' if not a command
+// list. Expansion placeholders (~, $) are handled by the caller (VimbEx) via
+// VimbExParser +expandPathVariableInString: for EX_FLAG_EXP commands. Returns
+// the index of the unescaped '|' the rhs stopped at (a chained-command
+// boundary), or NSUIntegerMax when there is none (command-list or end-of-line).
+- (NSUInteger)parseRhs {
+    if (!_isCmdList && (_flags & VimbExFlagRhs) == 0) { return NSUIntegerMax; }
+    if (_pos >= _line.length) { return NSUIntegerMax; }
     NSMutableString *out = [NSMutableString string];
     while (_pos < _line.length) {
         unichar c = [_line characterAtIndex:_pos];
         if (c == '\n') { break; }
-        if (!_isCmdList && c == '|') { break; }
+        if (!_isCmdList && c == '\\' && _pos + 1 < _line.length
+            && [_line characterAtIndex:_pos + 1] == '|') {
+            // escaped \| -> literal '|' in rhs (parity util_parse_expansion).
+            [out appendString:@"|"];
+            _pos += 2;
+            continue;
+        }
+        if (!_isCmdList && c == '|') {
+            _current.rhs = out.length ? out : nil;
+            return _pos;
+        }
         [out appendString:[NSString stringWithFormat:@"%C", c]];
         _pos++;
     }
     if (out.length) { _current.rhs = out; }
+    return NSUIntegerMax;
 }
 
 + (VimbExFlag)flagsForName:(NSString *)name {

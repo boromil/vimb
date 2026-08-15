@@ -442,6 +442,38 @@ static void test_ex_set_and_unknown(void) {
     TEST_ASSERT_EQ_STR(a.setArgs[0], @"scroll-step=100");
 }
 
+// '|' chaining (parity with ex_run_string loop): non-command-list commands
+// split rhs at an unescaped '|' and execute each segment in turn.
+static void test_ex_command_chaining(void) {
+    VimbEx *ex = [[VimbEx alloc] init];
+    SpyExActor *a = [[SpyExActor alloc] init];
+    ex.actor = a;
+
+    [ex runCommand:@"set scroll-step=100 | set font-size=20"];
+    TEST_ASSERT_EQ_I(a.setArgs.count, 2);
+    TEST_ASSERT_EQ_STR(a.setArgs[0], @"scroll-step=100");
+    TEST_ASSERT_EQ_STR(a.setArgs[1], @"font-size=20");
+    [a.setArgs removeAllObjects];
+
+    // open is a command-list command: '|' is literal rhs, no chaining.
+    [ex runCommand:@"open http://a.com|b.com"];
+    TEST_ASSERT_EQ_I(a.opened.count, 1);
+    TEST_ASSERT_EQ_STR(a.opened[0], @"http://a.com|b.com");
+    [a.opened removeAllObjects];
+
+    // A command-list command consumes the '|' as rhs content, so a following
+    // 'set' is NOT chained (parity: open carries EX_FLAG_CMD).
+    [ex runCommand:@"open http://x.com | set dark-mode=on"];
+    TEST_ASSERT_EQ_STR(a.opened[0], @"http://x.com | set dark-mode=on");
+    TEST_ASSERT_EQ_I(a.setArgs.count, 0);
+
+    // A non-command-list command splits and chains the second segment.
+    [ex runCommand:@"set font-size=19 | set dark-mode=on"];
+    TEST_ASSERT_EQ_I(a.setArgs.count, 2);
+    TEST_ASSERT_EQ_STR(a.setArgs[0], @"font-size=19");
+    TEST_ASSERT_EQ_STR(a.setArgs[1], @"dark-mode=on");
+}
+
 static void test_ex_map_command(void) {
     VimbEx *ex = [[VimbEx alloc] init];
     SpyExActor *a = [[SpyExActor alloc] init];
@@ -940,6 +972,7 @@ int main(void) {
     RUN_TEST(test_config_shortcuts_and_sources);
     RUN_TEST(test_ex_open);
     RUN_TEST(test_ex_set_and_unknown);
+    RUN_TEST(test_ex_command_chaining);
     RUN_TEST(test_ex_map_command);
     RUN_TEST(test_ex_commands_and_names);
     RUN_TEST(test_ex_parser_path_expansion);

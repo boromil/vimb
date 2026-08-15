@@ -17,6 +17,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, nullable) NSString *rest;
 // True when the command-name parse found no matching table command.
 @property(nonatomic, readonly) BOOL unknownCommand;
+// When the parsed command's rhs terminated at an unescaped '|' (a non-command-
+// list command), the remaining text after that '|' (leading whitespace
+// trimmed). Nil otherwise. Lets the caller chain commands like GTK's
+// ex_run_string loop (:set a=1 | set b=2). Command-list (EX_FLAG_CMD) commands
+// treat '|' as literal rhs content and never set this.
+@property(nonatomic, readonly, nullable) NSString *nextCommand;
 @end
 
 // Pure ex-command-line parser ported from src/ex.c (parse_command_name,
