@@ -302,11 +302,10 @@
         NSString *title = [t.title length] ? t.title : @"New Tab";
         NSButton *b = [NSButton buttonWithTitle:title target:self action:@selector(tabButtonClicked:)];
         b.tag = (NSInteger)i;
-        // Borderless: we draw the tab background ourselves via the layer, so
-        // the native bezel can't paint over it (TexturedRounded ignored
-        // bezelColor and made the active/inactive backgrounds invisible).
-        b.bordered = NO;
-        b.buttonType = NSButtonTypeMomentaryPushIn;
+        // NSBezelStyleRounded honors bezelColor (TexturedRounded/Inline did
+        // not), giving the active tab a native accent-tinted rounded pill and
+        // inactive tabs a subtle neutral pill — deterministic, no layer hacks.
+        b.bezelStyle = NSBezelStyleRounded;
         b.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
         b.controlSize = NSControlSizeRegular;
         b.imagePosition = NSNoImage;
@@ -319,16 +318,11 @@
         NSLayoutConstraint *w = [b.widthAnchor constraintLessThanOrEqualToConstant:180];
         w.priority = NSLayoutPriorityDefaultHigh;
         [NSLayoutConstraint activateConstraints:@[w]];
-        // Draw the rounded background via the layer (works reliably on a
-        // bordered=NO button). Active = solid accent, inactive = subtle gray.
-        b.wantsLayer = YES;
-        b.layer.cornerRadius = 5.0;
-        b.layer.masksToBounds = YES;
         if (i == activeIdx) {
-            b.layer.backgroundColor = [NSColor controlAccentColor].CGColor;
+            b.bezelColor = [NSColor controlAccentColor];
             b.contentTintColor = [NSColor whiteColor];
         } else {
-            b.layer.backgroundColor = [NSColor colorWithWhite:0.5 alpha:0.20].CGColor;
+            b.bezelColor = [NSColor colorWithWhite:0.5 alpha:0.25];
             b.contentTintColor = [NSColor labelColor];
         }
         [self.tabBar addArrangedSubview:b];
@@ -340,8 +334,7 @@
     if (!self.addTabButton) {
         self.addTabButton = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:@"New Tab"]
                                                target:self action:@selector(newTabAction:)];
-        self.addTabButton.bordered = NO;
-        self.addTabButton.buttonType = NSButtonTypeMomentaryPushIn;
+        self.addTabButton.bezelStyle = NSBezelStyleRounded;
         self.addTabButton.imagePosition = NSImageOnly;
         self.addTabButton.contentTintColor = [NSColor labelColor];
     }
