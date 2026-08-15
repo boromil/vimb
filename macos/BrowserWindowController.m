@@ -440,8 +440,12 @@ static const CGFloat kStatusHeight = 24.0;
             [self showMessage:[NSString stringWithFormat:@"invalid value for %@", name] error:YES];
             return;
         }
-        NSNumber *num = @(val.doubleValue);
-        [cfg applySetting:name value:num];
+        // Coerce the string to the setting's declared storage type (char stays
+        // NSString, int -> NSNumber(integer), bool -> NSNumber(boolean)). This
+        // fixes the prior bug of flattening every value to a double, which
+        // zeroed out char-typed settings like cookie-accept/edit-command.
+        id coerced = [cfg coerceSettingValue:name stringValue:val];
+        [cfg applySetting:name value:coerced];
     } else {
         // :set name (boolean -> on)
         [cfg applySetting:a value:@YES];

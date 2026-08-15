@@ -262,6 +262,35 @@ static void test_config_validate_setting(void) {
     TEST_ASSERT_TRUE([c validateSetting:@"scroll-step" value:@"40"]);
 }
 
+// :set name=value must coerce the typed string to the setting's declared type,
+// not flatten every value to a double (which previously zeroed char settings).
+static void test_config_coerce_setting_value(void) {
+    VimbConfig *c = [VimbConfig shared];
+    [c loadDefaults];
+
+    // char-typed settings keep their string.
+    TEST_ASSERT_EQ_STR([c coerceSettingValue:@"cookie-accept" stringValue:@"never"], @"never");
+    TEST_ASSERT_EQ_STR([c coerceSettingValue:@"download-command" stringValue:@"/usr/bin/x %s"], @"/usr/bin/x %s");
+
+    // int-typed settings become NSNumber(integer).
+    id scroll = [c coerceSettingValue:@"scroll-step" stringValue:@"250"];
+    TEST_ASSERT_TRUE([scroll isKindOfClass:[NSNumber class]]);
+    TEST_ASSERT_EQ_I([scroll integerValue], 250);
+
+    // bool-typed settings become NSNumber(boolean).
+    id imagesOff = [c coerceSettingValue:@"images" stringValue:@"off"];
+    TEST_ASSERT_EQ_I([imagesOff boolValue], NO);
+    id scriptsOn = [c coerceSettingValue:@"scripts" stringValue:@"on"];
+    TEST_ASSERT_EQ_I([scriptsOn boolValue], YES);
+
+    // type retrieval.
+    TEST_ASSERT_EQ_I([c typeForSetting:@"cookie-accept"], VSettingChar);
+    TEST_ASSERT_EQ_I([c typeForSetting:@"scroll-step"], VSettingInt);
+    TEST_ASSERT_EQ_I([c typeForSetting:@"images"], VSettingBool);
+
+    [c loadDefaults]; // restore
+}
+
 static void test_config_search_engine(void) {
     VimbConfig *c = [VimbConfig shared];
     [c loadDefaults];
@@ -882,6 +911,7 @@ int main(void) {
     RUN_TEST(test_config_load_defaults);
     RUN_TEST(test_config_apply_setting_getters);
     RUN_TEST(test_config_validate_setting);
+    RUN_TEST(test_config_coerce_setting_value);
     RUN_TEST(test_config_search_engine);
     RUN_TEST(test_config_mappings);
     RUN_TEST(test_config_convert_key_string);

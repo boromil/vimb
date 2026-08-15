@@ -2,6 +2,7 @@
 #import "VimbStorage.h"
 #import "VimbAutocmd.h"
 #import "VimbHandler.h"
+#import "VimbEngine.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -9,6 +10,10 @@ NS_ASSUME_NONNULL_BEGIN
 // shortcuts, and persistent storage handles. Shared across windows.
 @interface VimbConfig : NSObject
 @property(nonatomic, strong) NSMutableDictionary<NSString *, id> *settings;   // name -> VSetting
+// name -> NSNumber(VSettingType) mapping preserved so :set can coerce string
+// values to the setting's declared storage type (bool/int/char) instead of
+// flattening every input to a double (parity with setting.c typed setters).
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *settingTypes;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *shortcuts;
 @property(nonatomic, copy) NSString *defaultShortcut;
 @property(nonatomic, strong) VimbStorage *historyStore;
@@ -66,6 +71,14 @@ NS_ASSUME_NONNULL_BEGIN
 // Returns YES when the value may be applied. Exposed for the :set path (which
 // echoes an error + keeps input) and unit tests.
 - (BOOL)validateSetting:(NSString *)name value:(id)value;
+// Coerce a string value (as typed into :set) into the setting's declared
+// storage type: char -> NSString as-is, int -> NSNumber(integer), bool ->
+// NSNumber(boolean). Unknown names fall back to the string unchanged. This is
+// the parity fix for the ":set name=value" path flattening values to double.
+- (id)coerceSettingValue:(NSString *)name stringValue:(NSString *)value;
+// The declared storage type for a registered setting (VSettingBool/Int/Char),
+// or VSettingChar when unknown. List settings are treated as char.
+- (VSettingType)typeForSetting:(NSString *)name;
 
 // Shortcuts (e.g. "dd" -> "https://duckduckgo.com/?q=$0")
 - (nullable NSString *)resolveShortcut:(NSString *)input;

@@ -30,6 +30,7 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
     self = [super init];
     if (self) {
         _settings = [NSMutableDictionary dictionary];
+        _settingTypes = [NSMutableDictionary dictionary];
         _shortcuts = [NSMutableDictionary dictionary];
         _historyStore = [[VimbStorage alloc] initWithName:@"history"];
         _commandStore = [[VimbStorage alloc] initWithName:@"command"];
@@ -56,6 +57,7 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
 - (void)addSetting:(NSString *)name type:(VSettingType)type value:(id)value {
     NSString *compact = [name stringByReplacingOccurrencesOfString:@"-" withString:@""];
     [self.settings setObject:value forKey:name];
+    [self.settingTypes setObject:@(type) forKey:name];
     // Cache the commonly-read scalars for fast dispatch.
     if ([compact isEqualToString:@"scrollstep"])                 { _scrollstep = [value integerValue]; }
     else if ([compact isEqualToString:@"historymaxitems"])       { _historyMax = [value integerValue]; }
@@ -190,10 +192,51 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
 
 - (void)applySetting:(NSString *)name value:(id)value {
     self.settings[name] = value;
-    [self addSetting:name type:[value isKindOfClass:[NSNumber class]] ?
-            (CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID() ? VSettingBool : VSettingInt)
-            : VSettingChar
-         value:value];
+    // Preserve the setting's declared storage type when known (parity with the
+    // typed setter in setting.c); the :set path already coerced the string.
+    // Otherwise infer from the value shape (NSNumber bool -> Bool, NSNumber -> Int).
+    VSettingType t;
+    NSNumber *known = self.settingTypes[name];
+    if (known) {
+        t = (VSettingType)known.integerValue;
+    } else {
+        t = [value isKindOfClass:[NSNumber class]]
+            ? (CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID() ? VSettingBool : VSettingInt)
+            : VSettingChar;
+    }
+    [self addSetting:name type:t value:value];
+}
+
+- (VSettingType)typeForSetting:(NSString *)name {
+    NSNumber *known = self.settingTypes[name];
+    return known ? (VSettingType)known.integerValue : VSettingChar;
+}
+
+// Coerce a :set string value to the setting's declared type. Bool settings
+// accept on/off/true/false/yes/no/1/0 (empty means "on" per :set name=).
+- (id)coerceSettingValue:(NSString *)name stringValue:(NSString *)value {
+    VSettingType t = [self typeForSetting:name];
+    switch (t) {
+        case VSettingBool: {
+            NSString *s = [value lowercaseString];
+            BOOL b = [s isEqualToString:@"on"] || [s isEqualToString:@"true"]
+                  || [s isEqualToString:@"yes"] || [s isEqualToString:@"1"]
+                  || [s isEqualToString:@""];
+            // "off"/"false"/"no"/"0" -> NO, anything else defaults to NO but
+            // keeps the raw value for char-typed settings below.
+            if ([s isEqualToString:@"off"] || [s isEqualToString:@"false"]
+                || [s isEqualToString:@"no"] || [s isEqualToString:@"0"]) {
+                b = NO;
+            }
+            return @(b);
+        }
+        case VSettingInt:
+            return @(value.integerValue);
+        case VSettingChar:
+        case VSettingList:
+        default:
+            return value;
+    }
 }
 
 // Enforces the GTK setter constraints (setting.c) for the settings that carry
