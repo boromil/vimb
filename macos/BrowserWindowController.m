@@ -55,6 +55,11 @@
     window.titlebarAppearsTransparent = NO;
     window.tabbingMode = NSWindowTabbingModeDisallowed;
     window.minSize = NSMakeSize(640, 400);
+    // vimb manages its own session state (like GTK vimb): opt out of macOS
+    // persistent-window restoration. This also avoids the hidden "restore
+    // windows?" crash modal AppKit shows at launch after a previous crash,
+    // which blocks applicationDidFinishLaunching entirely.
+    window.restorable = NO;
 
     self = [super initWithWindow:window];
     if (self) {
@@ -102,25 +107,28 @@
 - (void)buildUI {
     NSView *content = self.window.contentView;
 
-    // Vertical layout, like a flex column: tab bar on top, web view filling
-    // the remaining space (flex 1 1 auto) and the status/command bar docked
-    // at the bottom. Pinning to the safe-area guides keeps every bar inside
-    // the window regardless of titlebar/fullscreen state, and the web view
-    // can never overlap or slide under either bar.
-    NSStackView *v = [NSStackView stackViewWithViews:@[]];
-    v.orientation = NSUserInterfaceLayoutOrientationVertical;
-    v.alignment = NSLayoutAttributeWidth;
-    v.spacing = 0;
-    v.translatesAutoresizingMaskIntoConstraints = NO;
-    [content addSubview:v];
+    // Flex-column root: one plain container pinned to the content view's
+    // safe-area guides (titlebar/fullscreen safe). The three rows attach to
+    // IT, not directly to the window: pinning several views straight to the
+    // window's guides during applicationDidFinishLaunching deadlocks Auto
+    // Layout on this OS (the launch Apple event is still being handled).
+    NSView *root = [[NSView alloc] init];
+    root.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:root];
     [NSLayoutConstraint activateConstraints:@[
-        [v.leadingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.leadingAnchor],
-        [v.trailingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.trailingAnchor],
-        [v.topAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.topAnchor],
-        [v.bottomAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.bottomAnchor],
+        [root.leadingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.leadingAnchor],
+        [root.trailingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.trailingAnchor],
+        [root.topAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.topAnchor],
+        [root.bottomAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.bottomAnchor],
     ]];
 
-    // Tab bar
+    // Row 1 — tab strip. An NSStackView as the vertical root is a trap: its
+    // gravity-areas distribution hands all leftover height to the last
+    // arranged view regardless of content-hugging priorities, collapsing
+    // the web container to zero (blank viewport, self-dismissing completion
+    // dropdown). The rows below form an explicit chain instead: tab strip
+    // pinned to the top, bottom bar pinned to the bottom, web container
+    // pinned between them (flex 1 1 auto).
     self.tabBar = [NSStackView stackViewWithViews:@[]];
     self.tabBar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     self.tabBar.alignment = NSLayoutAttributeCenterY;
@@ -146,17 +154,21 @@
         [self.tabBar.topAnchor constraintEqualToAnchor:tabHost.topAnchor],
         [self.tabBar.bottomAnchor constraintEqualToAnchor:tabHost.bottomAnchor],
     ]];
+    [root addSubview:tabHost];
+    [NSLayoutConstraint activateConstraints:@[
+        [tabHost.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        [tabHost.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
+        [tabHost.topAnchor constraintEqualToAnchor:root.topAnchor],
+    ]];
 
-    [v addArrangedSubview:tabHost];
-
-    // Web container fills the remaining height between the tab strip and the
-    // docked bottom bar.
+    // Row 2 — web container: the stretchy middle that fills everything
+    // between the tab strip and the docked bottom bar.
     self.webContainer = [[NSView alloc] init];
     self.webContainer.translatesAutoresizingMaskIntoConstraints = NO;
-    [v addArrangedSubview:self.webContainer];
+    [root addSubview:self.webContainer];
 
-    // Docked bottom bar (GTK parity: input line above status line in one
-    // box, web view ending at its top edge — the page never renders
+    // Row 3 — docked bottom bar (GTK parity: input line above status line in
+    // one box, web view ending at its top edge — the page never renders
     // underneath the chrome). input-autohide collapses the input row while
     // idle, exactly like vimb hides its input box when unfocused.
     NSView *bottomBar = [[NSView alloc] init];
@@ -164,7 +176,16 @@
     bottomBar.wantsLayer = YES;
     bottomBar.layer.backgroundColor = [NSColor controlBackgroundColor].CGColor;
     self.bottomBar = bottomBar;
-    [v addArrangedSubview:bottomBar];
+    [root addSubview:bottomBar];
+    [NSLayoutConstraint activateConstraints:@[
+        [bottomBar.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        [bottomBar.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
+        [bottomBar.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],
+        [self.webContainer.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        [self.webContainer.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
+        [self.webContainer.topAnchor constraintEqualToAnchor:tabHost.bottomAnchor],
+        [self.webContainer.bottomAnchor constraintEqualToAnchor:bottomBar.topAnchor],
+    ]];
 
     // Input line: the command/search field spanning the bar.
     VimbCommandField *cmdField = [[VimbCommandField alloc] initWithFrame:NSZeroRect];
@@ -209,7 +230,13 @@
         [self.commandField.topAnchor constraintEqualToAnchor:bottomBar.topAnchor constant:3],
         [self.statusField.leadingAnchor constraintEqualToAnchor:bottomBar.leadingAnchor constant:12],
         [self.statusField.trailingAnchor constraintLessThanOrEqualToAnchor:self.settingsIndicator.leadingAnchor constant:-8],
-        [self.statusField.topAnchor constraintGreaterThanOrEqualToAnchor:self.commandField.bottomAnchor constant:2],
+        // All-equality vertical chain: bar.top = cmd.top - 3,
+        // status.top = cmd.bottom + 2, status.bottom = bar.bottom - 3 —
+        // the bar's height is uniquely determined by its content (input row
+        // height + status line). Any inequality here leaves the bar's height
+        // free to stretch upward, and Auto Layout then hands the whole
+        // window height to the bar and collapses the web container to zero.
+        [self.statusField.topAnchor constraintEqualToAnchor:self.commandField.bottomAnchor constant:2],
         [self.statusField.bottomAnchor constraintEqualToAnchor:bottomBar.bottomAnchor constant:-3],
         [self.settingsIndicator.trailingAnchor constraintEqualToAnchor:bottomBar.trailingAnchor constant:-12],
         [self.settingsIndicator.bottomAnchor constraintEqualToAnchor:self.statusField.bottomAnchor],
@@ -224,8 +251,8 @@
     [self.webContainer addSubview:dd];
     self.completionDropdown = dd;
 
-    // Fill: webContainer expands between the two bars.
-    [v setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+    // webContainer is the stretchy flex row: its height is whatever lies
+    // between the two bars, and the bars size themselves from their content.
 }
 
 #pragma mark - Tabs
