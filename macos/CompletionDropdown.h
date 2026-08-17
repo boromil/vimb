@@ -29,6 +29,11 @@ NS_ASSUME_NONNULL_BEGIN
 // The currently highlighted row's value (first column), or nil when nothing is
 // selected or the list is empty.
 @property (nonatomic, readonly, nullable) NSString *selectedValue;
+
+// Fired whenever the highlight moves to a row (keyboard stepping or mouse
+// click) with that row's value — parity with GTK on_selection_changed ->
+// selfunc, which rewrites the input line on every selection change.
+@property (nonatomic, copy, nullable) void (^onSelectionChanged)(NSString *value);
 // The full currently-highlighted candidate, or nil.
 @property (nonatomic, readonly, nullable) CompletionCandidate *selectedCandidate;
 

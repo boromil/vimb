@@ -129,6 +129,12 @@ static const CGFloat kHardMaxHeight = 300.0;
 - (void)dismiss {
     self.hidden = YES;
     self.highlightIndex = -1;
+    // Ending the session drops the candidates too, so `hasCandidates` reflects
+    // "completion session active" (GTK FLAG_COMPLETION) rather than "rows were
+    // shown at some point".
+    self.candidates = @[];
+    [_tableView deselectAll:nil];
+    [_tableView reloadData];
 }
 
 - (BOOL)hasCandidates {
@@ -308,6 +314,17 @@ static const CGFloat kHardMaxHeight = 300.0;
 
 - (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)row {
     return YES;
+}
+
+// GTK parity (completion.c on_selection_changed): every selection change —
+// keyboard stepping or a mouse click — reports the newly highlighted value so
+// the owning controller can rewrite the input line (selfunc).
+- (void)tableViewSelectionDidChange:(NSNotification *)notification {
+    if (self.isHidden || self.candidates.count == 0) { return; }
+    NSInteger row = _tableView.selectedRow;
+    if (row < 0 || row >= (NSInteger)self.candidates.count) { return; }
+    self.highlightIndex = row;
+    if (self.onSelectionChanged) { self.onSelectionChanged(self.candidates[row].value); }
 }
 
 @end

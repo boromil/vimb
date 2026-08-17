@@ -274,7 +274,9 @@ static NSInteger rankForMatch(NSString *query, NSString *candidate) {
     NSString *token = norm;
     NSRange sp = [norm rangeOfString:@" " options:NSBackwardsSearch];
     if (sp.location != NSNotFound) { token = [norm substringFromIndex:sp.location + 1]; }
-    if (token.length == 0 || token.length >= line.length) { return line; }
+    if (token.length == 0) { return line; }
+    // token spans the whole (prompt-less) line: nothing is fixed before it.
+    if (token.length >= line.length) { return @""; }
     return [line substringToIndex:(line.length - token.length)];
 }
 
