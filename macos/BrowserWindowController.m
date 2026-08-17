@@ -150,7 +150,14 @@
     [tabHost addSubview:self.tabBar];
     [NSLayoutConstraint activateConstraints:@[
         [self.tabBar.leadingAnchor constraintEqualToAnchor:tabHost.leadingAnchor constant:8],
-        [self.tabBar.trailingAnchor constraintLessThanOrEqualToAnchor:tabHost.trailingAnchor constant:-8],
+        // Trailing EQUALITY: the strip is exactly as wide as the host. With
+        // many tabs the buttons compress (they truncate — compression
+        // resistance 750 loses to this 1000-priority pin) instead of pushing
+        // the strip — and the window — wider. A '<=' here let Auto Layout
+        // grow the WINDOW to the strip's fitting width (verified: 25 tabs
+        // resized the 1100pt window to 2229pt), and in non-resizable states
+        // painted tab labels past the window borders.
+        [self.tabBar.trailingAnchor constraintEqualToAnchor:tabHost.trailingAnchor constant:-8],
         [self.tabBar.topAnchor constraintEqualToAnchor:tabHost.topAnchor],
         [self.tabBar.bottomAnchor constraintEqualToAnchor:tabHost.bottomAnchor],
     ]];
@@ -364,11 +371,19 @@
         b.controlSize = NSControlSizeRegular;
         b.imagePosition = NSNoImage;
         b.lineBreakMode = NSLineBreakByTruncatingTail;
+        // Let the cell shrink below the full title (truncating with …) so
+        // the strip can compress when there are many tabs. Without this the
+        // title imposes a required minimum width, the strip's required
+        // constraints become unsatisfiable, and AppKit grows the WINDOW to
+        // the strip's fitting width (verified: 25 tabs resized a 1100pt
+        // window to 2229pt).
+        b.cell.wraps = NO;
+        b.cell.truncatesLastVisibleLine = YES;
         // Cap each tab width so long titles truncate instead of pushing the
         // strip wide, and require the button to hug its own contents so the
         // stack lays tabs out left-to-right with no dead gap between them.
         [b setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
-        [b setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+        [b setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
         NSLayoutConstraint *w = [b.widthAnchor constraintLessThanOrEqualToConstant:180];
         w.priority = NSLayoutPriorityDefaultHigh;
         [NSLayoutConstraint activateConstraints:@[w]];
