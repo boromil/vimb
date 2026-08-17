@@ -252,4 +252,30 @@ static NSInteger rankForMatch(NSString *query, NSString *candidate) {
     return cands;
 }
 
+// Strip leading ':' and whitespace (src/ex.c complete() parity).
++ (NSString *)normalizedLine:(NSString *)line {
+    NSString *s = line ?: @"";
+    while (s.length > 0) {
+        unichar c = [s characterAtIndex:0];
+        if (c == ':' || [[NSCharacterSet whitespaceCharacterSet] characterIsMember:c]) {
+            s = [s substringFromIndex:1];
+        } else {
+            break;
+        }
+    }
+    return s;
+}
+
+// Prompt char + command word before the token being completed.
++ (NSString *)completionHeadForLine:(NSString *)line {
+    if ([line hasPrefix:@"/"] || [line hasPrefix:@"?"]) { return [line substringToIndex:1]; }
+    NSString *norm = [self normalizedLine:line];
+    if (norm.length == 0 || norm.length > line.length) { return line; }
+    NSString *token = norm;
+    NSRange sp = [norm rangeOfString:@" " options:NSBackwardsSearch];
+    if (sp.location != NSNotFound) { token = [norm substringFromIndex:sp.location + 1]; }
+    if (token.length == 0 || token.length >= line.length) { return line; }
+    return [line substringToIndex:(line.length - token.length)];
+}
+
 @end

@@ -1649,6 +1649,28 @@ static void test_completion_dropdown(void) {
     TEST_ASSERT_FALSE(empty.hasBackground && empty.hasForeground);
 }
 
+// Foundation-only completion line normalization and head extraction.
+static void test_completion_line_normalization(void) {
+    // normalizedLine: strips leading ':' and whitespace.
+    TEST_ASSERT_EQ_STR([CompletionMatcher normalizedLine:@":open ex"], @"open ex");
+    TEST_ASSERT_EQ_STR([CompletionMatcher normalizedLine:@":: x"], @"x");
+    TEST_ASSERT_EQ_STR([CompletionMatcher normalizedLine:@": :q"], @"q");
+    TEST_ASSERT_EQ_STR([CompletionMatcher normalizedLine:@""], @"");
+    TEST_ASSERT_EQ_STR([CompletionMatcher normalizedLine:@":"], @"");
+    TEST_ASSERT_EQ_STR([CompletionMatcher normalizedLine:@"open"], @"open");
+    TEST_ASSERT_EQ_STR([CompletionMatcher normalizedLine:@" \t :foo "], @"foo ");
+
+    // completionHeadForLine: fixed part before the token being completed.
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@":open ex"], @":open ");
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@":tabopen a"], @":tabopen ");
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@":q"], @":");
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@":set dark-background"], @":set ");
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@"/query here"], @"/");
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@"?x y"], @"?");
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@":open "], @":open ");
+    TEST_ASSERT_EQ_STR([CompletionMatcher completionHeadForLine:@":bd  3"], @":bd  ");
+}
+
 #pragma mark - Context menu (WS-2, parity src/context-menu.c)
 
 // Context-menu tree builder (VimbContextMenu.m) for a right-clicked element.
@@ -1847,6 +1869,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_autocmd_multiword_and_remove_all);
 
     RUN_TEST(test_completion_dropdown);
+    RUN_TEST(test_completion_line_normalization);
     RUN_TEST(test_context_menu_build);
     RUN_TEST(test_bookmark_store);
 

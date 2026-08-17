@@ -23,6 +23,14 @@
 @property(nonatomic, strong) NSMutableArray<NSString *> *completionCycle;
 @property(nonatomic, copy) NSString *completionPrefixLine;
 @property(nonatomic, assign) NSInteger completionIndex;
+// Completion session state for the live dropdown (GTK parity: excomp).
+// head = fixed part before the completed token (":open "), baseLine = the
+// line as the user typed it (restored when stepping past the list edge),
+// suppress flag stops completion-refresh feedback loops while the dropdown
+// itself rewrites the field (completion_select).
+@property(nonatomic, copy, nullable) NSString *completionHead;
+@property(nonatomic, copy, nullable) NSString *completionBaseLine;
+@property(nonatomic, assign) BOOL suppressCompletionRefresh;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *pendingMarkY;
 @property(nonatomic, strong) NSMutableArray<VimbTab *> *tabs;
 @property(nonatomic, weak) VimbTab *activeTab;
@@ -1707,20 +1715,26 @@
 #pragma mark - Command field (NSTextFieldDelegate)
 
 - (void)controlTextDidChange:(NSNotification *)obj {
-    // Reset any active completion cycle once the user edits the text.
-    if (self.completionCycle.count > 0) {
-        [self.completionCycle removeAllObjects];
-        self.completionPrefixLine = nil;
-        self.completionIndex = 0;
-    }
+    // Rewrites made by the completion itself (single-match autofill, selection
+    // sync) must not re-trigger the completion machinery; incremental search
+    // still runs (GTK: the "changed" signal fires for those writes too).
+    if (!self.suppressCompletionRefresh) {
+        // Reset any active completion cycle once the user edits the text.
+        if (self.completionCycle.count > 0) {
+            [self.completionCycle removeAllObjects];
+            self.completionPrefixLine = nil;
+            self.completionIndex = 0;
+        }
 
-    // Live-populate the completion dropdown (parity with src/completion.c: the
-    // candidate list follows the current command/search text as the user types).
-    VimMode m = self.vim.mode;
-    if (m == VimModeCommand || m == VimModeSearch) {
-        [self refreshCompletionCandidatesForLine:self.commandField.stringValue];
-    } else {
-        [self.completionDropdown dismiss];
+        // Live-populate the completion dropdown (parity with src/completion.c:
+        // the candidate list follows the current command/search text as the
+        // user types).
+        VimMode m = self.vim.mode;
+        if (m == VimModeCommand || m == VimModeSearch) {
+            [self refreshCompletionCandidatesForLine:self.commandField.stringValue];
+        } else {
+            [self.completionDropdown dismiss];
+        }
     }
 
     // Incremental search (vim's 'incsearch'): while the user types a / or ?
@@ -1747,11 +1761,11 @@
         // Enter applies the highlighted candidate, Esc dismisses.
         if ([self.completionDropdown respondsToSelector:@selector(moveSelectionBy:)]) {
             if (commandSelector == @selector(insertTab:) && self.completionDropdown.hasCandidates) {
-                [self.completionDropdown moveSelectionBy:1];
+                [self stepDropdownSelectionBy:1];
                 return YES;
             }
             if (commandSelector == @selector(insertBacktab:) && self.completionDropdown.hasCandidates) {
-                [self.completionDropdown moveSelectionBy:-1];
+                [self stepDropdownSelectionBy:-1];
                 return YES;
             }
             if ((commandSelector == @selector(insertNewline:)) && self.completionDropdown.hasCandidates
@@ -1870,6 +1884,20 @@
 // :bma/:bmr bookmarks, and /-? search history.
 - (void)completeCommandField { [self completeCommandFieldDirection:1]; }
 
+// Strip leading ':' and whitespace the way GTK complete() does before
+// matching, so ":open ex" completes exactly like "open ex" (the seeded ':'
+// prompt char stays in the field but must not break prefix matching).
+- (NSString *)completionNormalizedLine:(NSString *)line {
+    return [CompletionMatcher normalizedLine:line];
+}
+
+// The fixed part of the line before the token being completed: the prompt
+// char plus any command word — ":", ":open ", "/", ":set ". Rewriting the
+// field as "head + candidate" keeps everything the user already typed.
+- (NSString *)completionHeadForLine:(NSString *)line {
+    return [CompletionMatcher completionHeadForLine:line];
+}
+
 // Collect ordered completion candidate strings for a command/search line,
 // without applying anything. Reused by the Tab-cycling path and the live
 // completion dropdown (parity with src/completion.c candidate generation).
@@ -1884,9 +1912,12 @@
         return cands;
     }
 
-    if ([line hasPrefix:@"open "] || [line hasPrefix:@"tabopen "]) {
-        BOOL tab = [line hasPrefix:@"tabopen "];
-        NSString *prefix = [line substringFromIndex:(tab ? 8 : 5)];
+    // Command matching happens on the ':'-stripped line (GTK parity).
+    NSString *norm = [self completionNormalizedLine:line];
+
+    if ([norm hasPrefix:@"open "] || [norm hasPrefix:@"tabopen "]) {
+        BOOL tab = [norm hasPrefix:@"tabopen "];
+        NSString *prefix = [norm substringFromIndex:(tab ? 8 : 5)];
         BOOL book = [prefix hasPrefix:@"!"];
         if (book) { prefix = [prefix substringFromIndex:1]; }
         for (NSDictionary *b in [self bookmarksByPrefix:prefix]) { if (book || [b[@"url"] hasPrefix:prefix]) [cands addObject:b[@"url"]]; }
@@ -1897,22 +1928,22 @@
         return cands;
     }
 
-    if ([line hasPrefix:@"set "]) {
-        NSString *prefix = [line substringFromIndex:4];
+    if ([norm hasPrefix:@"set "]) {
+        NSString *prefix = [norm substringFromIndex:4];
         for (NSString *name in [VimbConfig shared].settings.allKeys) {
             if ([name hasPrefix:prefix]) { [cands addObject:name]; }
         }
         return cands;
     }
 
-    if ([line hasPrefix:@"bma "] || [line hasPrefix:@"bmr "]) {
-        NSString *prefix = [line containsString:@" "] ? [line substringFromIndex:([line rangeOfString:@" "].location + 1)] : @"";
+    if ([norm hasPrefix:@"bma "] || [norm hasPrefix:@"bmr "]) {
+        NSString *prefix = [norm containsString:@" "] ? [norm substringFromIndex:([norm rangeOfString:@" "].location + 1)] : @"";
         for (NSDictionary *b in [self bookmarksByPrefix:prefix]) { [cands addObject:b[@"url"]]; }
         return cands;
     }
 
-    if ([line hasPrefix:@"bdelete "] || [line hasPrefix:@"bd "] || [line hasPrefix:@"b "]) {
-        NSString *prefix = [line containsString:@" "] ? [line substringFromIndex:([line rangeOfString:@" "].location + 1)] : @"";
+    if ([norm hasPrefix:@"bdelete "] || [norm hasPrefix:@"bd "] || [norm hasPrefix:@"b "]) {
+        NSString *prefix = [norm containsString:@" "] ? [norm substringFromIndex:([norm rangeOfString:@" "].location + 1)] : @"";
         for (VimbTab *t in self.tabs) {
             NSString *turl = t.url.absoluteString ?: t.webView.URL.absoluteString ?: @"";
             NSString *ttitle = t.title ?: @"";
@@ -1921,13 +1952,10 @@
         return cands;
     }
 
-    // Bare command name completion (the leading ':' is not in the field text).
-    NSString *cmdPrefix = line;
-    BOOL hasSpace = [line rangeOfString:@" "].location != NSNotFound;
-    if (!hasSpace || [line hasPrefix:@":"]) {
-        if ([line hasPrefix:@":"]) { cmdPrefix = [line substringFromIndex:1]; }
+    // Bare command name completion.
+    if (![norm containsString:@" "]) {
         for (NSString *name in self.exEngine.commandNames) {
-            if ([name hasPrefix:cmdPrefix]) { [cands addObject:name]; }
+            if ([name hasPrefix:norm]) { [cands addObject:name]; }
         }
     }
     return cands;
@@ -1938,8 +1966,35 @@
 - (void)refreshCompletionCandidatesForLine:(NSString *)line {
     if (!self.completionDropdown) { return; }
     if (line.length == 0) { [self.completionDropdown dismiss]; return; }
+
+    // Feed the completion-* CSS settings to the dropdown (parity with the GTK
+    // #completion row styling; previously these settings only reached the
+    // webview hint page).
+    VimbConfig *cfg = [VimbConfig shared];
+    NSString *css = [cfg getString:@"completion-css" defaultValue:@""];
+    NSString *selCss = [cfg getString:@"completion-selected-css" defaultValue:@""];
+    NSString *hovCss = [cfg getString:@"completion-hover-css" defaultValue:@""];
+    if (![self.completionDropdown.completionCSS isEqualToString:css]) { self.completionDropdown.completionCSS = css; }
+    if (![self.completionDropdown.completionSelectedCSS isEqualToString:selCss]) { self.completionDropdown.completionSelectedCSS = selCss; }
+    if (![self.completionDropdown.completionHoverCSS isEqualToString:hovCss]) { self.completionDropdown.completionHoverCSS = hovCss; }
+
     NSArray<NSString *> *strings = [self completionCandidatesForLine:line];
     if (strings.count == 0) { [self.completionDropdown dismiss]; return; }
+
+    // Track the completion session (GTK excomp): the head stays fixed while
+    // candidates rewrite the trailing token, and the base line is what the
+    // user typed (restored when stepping past the list edge).
+    self.completionBaseLine = line;
+    self.completionHead = [self completionHeadForLine:line];
+
+    // GTK parity (completion_create): a single match never opens the list —
+    // the select function runs immediately, filling the input.
+    if (strings.count == 1) {
+        [self.completionDropdown dismiss];
+        [self setCommandFieldTextSuppressingCompletion:[self.completionHead stringByAppendingString:strings[0]]];
+        return;
+    }
+
     NSMutableArray<CompletionCandidate *> *candidates = [NSMutableArray array];
     for (NSString *s in strings) {
         [candidates addObject:[CompletionCandidate candidateWithValue:s detail:nil]];
@@ -1953,6 +2008,34 @@
     [self.completionDropdown presentRelativeToRect:anchor inView:self.webContainer];
 }
 
+// Rewrite the command field from the completion itself (single-match autofill
+// or selection sync), suppressing the completion-refresh feedback loop.
+// Incremental search still reacts (controlTextDidChange runs it regardless).
+- (void)setCommandFieldTextSuppressingCompletion:(NSString *)text {
+    if ([self.commandField.stringValue isEqualToString:text]) { return; }
+    self.suppressCompletionRefresh = YES;
+    self.commandField.stringValue = text;
+    NSText *editor = [self.commandField currentEditor];
+    if (editor) { [editor setSelectedRange:NSMakeRange(editor.string.length, 0)]; }
+    self.suppressCompletionRefresh = NO;
+}
+
+// GTK parity: moving through the completion list rewrites the input line
+// (completion_select via on_selection_changed); stepping over the first/last
+// item clears the highlight and restores the text the user had typed
+// (complete(): completion_next == FALSE -> completion_select(excomp.token));
+// the next step in the same direction wraps to the far end.
+- (void)stepDropdownSelectionBy:(NSInteger)direction {
+    if ([self.completionDropdown moveSelectionBy:direction]) {
+        NSString *v = self.completionDropdown.selectedValue;
+        if (v.length > 0) {
+            [self setCommandFieldTextSuppressingCompletion:[self.completionHead stringByAppendingString:v]];
+        }
+    } else {
+        [self setCommandFieldTextSuppressingCompletion:self.completionBaseLine ?: @""];
+    }
+}
+
 - (void)completeCommandFieldDirection:(NSInteger)direction {
     NSString *line = self.commandField.stringValue;
 
@@ -1963,48 +2046,47 @@
     }
 
     NSArray<NSString *> *cands = [self completionCandidatesForLine:line];
+    // ':'-stripped view of the line for prefix matching (GTK parity); head is
+    // the fixed part the completion keeps when rewriting the field.
+    NSString *norm = [self completionNormalizedLine:line];
+    NSString *head = self.completionHead ?: [self completionHeadForLine:line];
 
     if ([line hasPrefix:@"/"] || [line hasPrefix:@"?"]) {
-        if (cands.count == 1) { [self applyCompletion:[NSString stringWithFormat:@"%C", [line characterAtIndex:0]] appendTo:[line substringFromIndex:1] value:cands[0]]; }
+        if (cands.count == 1) { [self setCommandFieldTextSuppressingCompletion:[NSString stringWithFormat:@"%@%@", head, cands[0]]]; }
         else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
         return;
     }
 
-    if ([line hasPrefix:@"open "] || [line hasPrefix:@"tabopen "]) {
-        BOOL tab = [line hasPrefix:@"tabopen "];
+    if ([norm hasPrefix:@"open "] || [norm hasPrefix:@"tabopen "]) {
         if (cands.count == 1) {
-            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", tab ? @"tabopen " : @"open ", cands[0]];
-        } else if (cands.count > 1) {
-            [self startCompletionCycle:cands ofLine:line];
-        }
-        return;
-    }
-
-    if ([line hasPrefix:@"set "]) {
-        if (cands.count == 1) { self.commandField.stringValue = [NSString stringWithFormat:@"set %@", cands[0]]; }
-        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
-        return;
-    }
-
-    if ([line hasPrefix:@"bma "] || [line hasPrefix:@"bmr "]) {
-        if (cands.count == 1) {
-            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@",
-                [line hasPrefix:@"bmr "] ? @"bmr " : @"bma ", cands[0]];
+            [self setCommandFieldTextSuppressingCompletion:[NSString stringWithFormat:@"%@%@", head, cands[0]]];
         } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
         return;
     }
 
-    if ([line hasPrefix:@"bdelete "] || [line hasPrefix:@"bd "] || [line hasPrefix:@"b "]) {
+    if ([norm hasPrefix:@"set "]) {
+        if (cands.count == 1) { [self setCommandFieldTextSuppressingCompletion:[NSString stringWithFormat:@"%@%@", head, cands[0]]]; }
+        else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    if ([norm hasPrefix:@"bma "] || [norm hasPrefix:@"bmr "]) {
         if (cands.count == 1) {
-            NSString *head = [line hasPrefix:@"bd "] ? @"bd " : ([line hasPrefix:@"b "] ? @"b " : @"bdelete ");
-            self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", head, cands[0]];
+            [self setCommandFieldTextSuppressingCompletion:[NSString stringWithFormat:@"%@%@", head, cands[0]]];
+        } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
+        return;
+    }
+
+    if ([norm hasPrefix:@"bdelete "] || [norm hasPrefix:@"bd "] || [norm hasPrefix:@"b "]) {
+        if (cands.count == 1) {
+            [self setCommandFieldTextSuppressingCompletion:[NSString stringWithFormat:@"%@%@", head, cands[0]]];
         } else if (cands.count > 1) { [self startCompletionCycle:cands ofLine:line]; }
         return;
     }
 
     // Bare command name completion.
     if (cands.count == 1) {
-        self.commandField.stringValue = cands[0];
+        [self setCommandFieldTextSuppressingCompletion:[NSString stringWithFormat:@"%@%@", head, cands[0]]];
     } else if (cands.count > 1) {
         [self startCompletionCycle:cands ofLine:line];
     }
@@ -2029,21 +2111,20 @@
     self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", head, choice];
 }
 
-- (void)applyCompletion:(NSString *)prefix appendTo:(NSString *)edited value:(NSString *)value {
-    self.commandField.stringValue = [NSString stringWithFormat:@"%@%@", prefix, value];
-    (void)edited;
-}
-
 // Called when Enter is pressed while a completion row is highlighted: apply the
 // selected completion to the trailing token of the current command line, then
 // hand off to the normal command-line execution (parity with src/completion.c:
 // choosing a candidate completes the text, Enter then runs the command).
 - (void)commandLineCommittedWithCompletion:(NSString *)choice {
+    // The live selection sync already rewrote the field to head+choice; only
+    // rebuild when the field diverged. Never split the line on spaces — values
+    // like URLs and search queries can contain them.
     NSString *cur = self.commandField.stringValue;
-    NSRange sp = [cur rangeOfString:@" " options:NSBackwardsSearch];
-    NSString *head = (sp.location == NSNotFound) ? @"" : [cur substringToIndex:sp.location + 1];
-    NSString *completed = [NSString stringWithFormat:@"%@%@", head, choice];
-    self.commandField.stringValue = completed;
+    if (![cur hasSuffix:choice]) {
+        cur = [(self.completionHead ? self.completionHead : @"") stringByAppendingString:choice];
+        [self setCommandFieldTextSuppressingCompletion:cur];
+    }
+    NSString *completed = cur;
     VimMode m = self.vim.mode;
     [self.completionDropdown dismiss];
     // Unified executor (parity with the plain-Enter path): search and command

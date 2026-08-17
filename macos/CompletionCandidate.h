@@ -64,6 +64,16 @@ NS_SWIFT_NAME(CompletionList)
                                                entries:(NSArray<NSDictionary<NSString *, NSString *> *> *)entries
                                                   limit:(NSUInteger)limit;
 
+// Strip the leading ':' prompt and whitespace the way src/ex.c complete()
+// does before matching: the seeded ':' stays in the field but must not break
+// prefix matching, so ":open ex" completes exactly like "open ex".
++ (NSString *)normalizedLine:(NSString *)line;
+
+// The fixed part of a command/search line before the token being completed:
+// the prompt char plus any command word — ":", ":open ", "/". Rewriting the
+// line as head + candidate preserves everything the user already typed.
++ (NSString *)completionHeadForLine:(NSString *)line;
+
 // Parse a GTK completion-* CSS declaration body into a CompletionStyle.
 + (CompletionStyle *)styleFromCSS:(NSString *)css;
 @end

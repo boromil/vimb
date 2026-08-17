@@ -41,8 +41,10 @@ NS_ASSUME_NONNULL_BEGIN
 // Replace the candidate list and refresh the shown rows.
 - (void)updateWithCandidates:(NSArray<CompletionCandidate *> *)candidates;
 
-// Move the highlight by +1/-1 (Tab/Shift-Tab). Wraps at both ends. Returns YES
-// only while the dropdown is visible and has candidates.
+// Move the highlight by +1/-1 (Tab/Shift-Tab). GTK parity: stepping past the
+// first/last item clears the highlight and returns NO (the caller restores
+// the typed text); the next step in the same direction wraps to the far end.
+// Returns YES only while the dropdown is visible and has candidates.
 - (BOOL)moveSelectionBy:(NSInteger)direction;
 
 // Dismiss/hide the dropdown (Esc / completion end).
