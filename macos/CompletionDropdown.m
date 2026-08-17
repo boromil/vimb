@@ -78,10 +78,17 @@ static const CGFloat kMaxHeight = 240.0;
 - (void)presentRelativeToRect:(NSRect)rect inView:(NSView *)view {
     NSUInteger count = self.candidates.count;
     if (count == 0) { [self dismiss]; return; }
-    CGFloat h = MIN((CGFloat)count * kRowHeight, kMaxHeight);
-    CGFloat yInSuper = rect.origin.y - h;
-    NSRect f = NSMakeRect(rect.origin.x, yInSuper, rect.size.width, h);
-    self.frame = f;
+    // The anchor's origin.y marks the line the dropdown's BOTTOM edge sits on
+    // (the top of the command input row); the list grows upward from it, over
+    // the page — like vimb GTK, where the completion box stacks above the
+    // input line. Clamp width/height inside the container so rows can never
+    // be clipped by the window boundary or overlap the input row.
+    CGFloat x = MAX(0, rect.origin.x);
+    CGFloat w = MIN(rect.size.width, view.bounds.size.width - 2 * x);
+    CGFloat avail = view.bounds.size.height - rect.origin.y;
+    CGFloat h = MIN(MIN((CGFloat)count * kRowHeight, kMaxHeight), avail);
+    if (w < kRowHeight || h <= 0) { [self dismiss]; return; }
+    self.frame = NSMakeRect(x, rect.origin.y, w, h);
     self.hidden = NO;
 }
 

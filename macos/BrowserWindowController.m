@@ -31,6 +31,8 @@
 @property(nonatomic, strong) NSMutableArray<NSButton *> *tabButtons;
 @property(nonatomic, strong) NSButton *addTabButton;
 @property(nonatomic, strong) NSView *webContainer;
+@property(nonatomic, strong) NSView *bottomBar;
+@property(nonatomic, strong) NSLayoutConstraint *inputRowHeight;
 @property(nonatomic, strong) VimbCommandField *commandField;
 @property(nonatomic, strong) CompletionDropdown *completionDropdown;
 @property(nonatomic, strong) NSTextField *statusField;
@@ -100,7 +102,11 @@
 - (void)buildUI {
     NSView *content = self.window.contentView;
 
-    // Vertical layout: tab bar on top, web view in middle, status bar below.
+    // Vertical layout, like a flex column: tab bar on top, web view filling
+    // the remaining space (flex 1 1 auto) and the status/command bar docked
+    // at the bottom. Pinning to the safe-area guides keeps every bar inside
+    // the window regardless of titlebar/fullscreen state, and the web view
+    // can never overlap or slide under either bar.
     NSStackView *v = [NSStackView stackViewWithViews:@[]];
     v.orientation = NSUserInterfaceLayoutOrientationVertical;
     v.alignment = NSLayoutAttributeWidth;
@@ -108,10 +114,10 @@
     v.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:v];
     [NSLayoutConstraint activateConstraints:@[
-        [v.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-        [v.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
-        [v.topAnchor constraintEqualToAnchor:content.topAnchor],
-        [v.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+        [v.leadingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.leadingAnchor],
+        [v.trailingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.trailingAnchor],
+        [v.topAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.topAnchor],
+        [v.bottomAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.bottomAnchor],
     ]];
 
     // Tab bar
@@ -126,6 +132,12 @@
     self.tabBar.distribution = NSStackViewDistributionGravityAreas;
     NSView *tabHost = [[NSView alloc] init];
     tabHost.translatesAutoresizingMaskIntoConstraints = NO;
+    // Clip overflowing tab buttons at the window edge: with many tabs the
+    // strip can get wider than the window, and without clipping the last
+    // button paints outside the window frame (stray clipped label text at
+    // the top-right corner).
+    tabHost.wantsLayer = YES;
+    tabHost.layer.masksToBounds = YES;
     self.tabBar.translatesAutoresizingMaskIntoConstraints = NO;
     [tabHost addSubview:self.tabBar];
     [NSLayoutConstraint activateConstraints:@[
@@ -137,67 +149,82 @@
 
     [v addArrangedSubview:tabHost];
 
-    // Web container fills the remaining height.
+    // Web container fills the remaining height between the tab strip and the
+    // docked bottom bar.
     self.webContainer = [[NSView alloc] init];
     self.webContainer.translatesAutoresizingMaskIntoConstraints = NO;
     [v addArrangedSubview:self.webContainer];
 
-    // Command line + status: a transient chrome-free overlay pinned to the
-    // bottom of the web container. It is hidden by default and appears only
-    // while a command/search is typed or a short status message is shown,
-    // matching both macOS HIG (no persistent status bar) and vimb's spare UI.
+    // Docked bottom bar (GTK parity: input line above status line in one
+    // box, web view ending at its top edge — the page never renders
+    // underneath the chrome). input-autohide collapses the input row while
+    // idle, exactly like vimb hides its input box when unfocused.
+    NSView *bottomBar = [[NSView alloc] init];
+    bottomBar.translatesAutoresizingMaskIntoConstraints = NO;
+    bottomBar.wantsLayer = YES;
+    bottomBar.layer.backgroundColor = [NSColor controlBackgroundColor].CGColor;
+    self.bottomBar = bottomBar;
+    [v addArrangedSubview:bottomBar];
+
+    // Input line: the command/search field spanning the bar.
     VimbCommandField *cmdField = [[VimbCommandField alloc] initWithFrame:NSZeroRect];
     cmdField.vbDelegate = self;
     cmdField.delegate = self;
     self.commandField = cmdField;
-    self.commandField.delegate = self;
     self.commandField.font = [NSFont systemFontOfSize:14 weight:NSFontWeightRegular];
     self.commandField.bezelStyle = NSTextFieldRoundedBezel;
     self.commandField.controlSize = NSControlSizeRegular;
-    self.commandField.alphaValue = 0.0;
     self.commandField.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.webContainer addSubview:self.commandField];
+    [bottomBar addSubview:self.commandField];
 
+    // Status line: URL / transient messages in fixed rows, so text is always
+    // fully visible and never clipped by the window boundary.
     self.statusField = [NSTextField labelWithString:@""];
     self.statusField.font = [NSFont systemFontOfSize:12];
     self.statusField.textColor = [NSColor secondaryLabelColor];
     self.statusField.lineBreakMode = NSLineBreakByTruncatingTail;
     self.statusField.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.webContainer addSubview:self.statusField];
+    [bottomBar addSubview:self.statusField];
 
     // status-bar-show-settings: right-aligned settings token (parity with
-    // src/main.c STATUS_VARAIBLE_SHOW). Hidden unless the setting is on.
+    // src/main.c STATUS_VARAIBLE_SHOW). Emptied (width 0) unless on, so the
+    // status line can use the full width when it is off.
     self.settingsIndicator = [NSTextField labelWithString:@""];
     self.settingsIndicator.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
     self.settingsIndicator.textColor = [NSColor tertiaryLabelColor];
     self.settingsIndicator.alignment = NSTextAlignmentRight;
     self.settingsIndicator.translatesAutoresizingMaskIntoConstraints = NO;
     self.settingsIndicator.hidden = YES;
-    [self.webContainer addSubview:self.settingsIndicator];
+    [bottomBar addSubview:self.settingsIndicator];
 
+    self.inputRowHeight = [self.commandField.heightAnchor constraintEqualToConstant:26];
+    self.inputRowHeight.active = YES;
+    if ([self inputAutohide]) {
+        self.inputRowHeight.constant = 0;
+        self.commandField.hidden = YES;
+    }
     [NSLayoutConstraint activateConstraints:@[
-        [self.commandField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:10],
-        [self.commandField.trailingAnchor constraintEqualToAnchor:self.webContainer.trailingAnchor constant:-12],
-        [self.commandField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-8],
-        [self.commandField.heightAnchor constraintEqualToConstant:28],
-        [self.statusField.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor constant:12],
-        [self.statusField.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-4],
-        [self.settingsIndicator.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.statusField.trailingAnchor constant:8],
-        [self.settingsIndicator.trailingAnchor constraintEqualToAnchor:self.webContainer.trailingAnchor constant:-12],
-        [self.settingsIndicator.bottomAnchor constraintEqualToAnchor:self.webContainer.bottomAnchor constant:-4],
+        [self.commandField.leadingAnchor constraintEqualToAnchor:bottomBar.leadingAnchor constant:10],
+        [self.commandField.trailingAnchor constraintEqualToAnchor:bottomBar.trailingAnchor constant:-12],
+        [self.commandField.topAnchor constraintEqualToAnchor:bottomBar.topAnchor constant:3],
+        [self.statusField.leadingAnchor constraintEqualToAnchor:bottomBar.leadingAnchor constant:12],
+        [self.statusField.trailingAnchor constraintLessThanOrEqualToAnchor:self.settingsIndicator.leadingAnchor constant:-8],
+        [self.statusField.topAnchor constraintGreaterThanOrEqualToAnchor:self.commandField.bottomAnchor constant:2],
+        [self.statusField.bottomAnchor constraintEqualToAnchor:bottomBar.bottomAnchor constant:-3],
+        [self.settingsIndicator.trailingAnchor constraintEqualToAnchor:bottomBar.trailingAnchor constant:-12],
+        [self.settingsIndicator.bottomAnchor constraintEqualToAnchor:self.statusField.bottomAnchor],
     ]];
 
     // Completion dropdown (parity with src/completion.c): an opaque list that
-    // appears above the command field while the user types a :/ command or a
-    // /? search. Positioned via presentRelativeToRect:inView: on reveal so the
-    // AppKit view manages its own frame (it uses a springs/struts layout).
+    // grows upward from the top of the input row while the user types a :/
+    // command or a /? search. Its frame is set on every refresh via
+    // presentRelativeToRect:inView:, which clamps it inside the container.
     CompletionDropdown *dd = [[CompletionDropdown alloc] initWithFrame:NSMakeRect(10, 0, 320, 160)];
-    dd.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
     dd.hidden = YES;
     [self.webContainer addSubview:dd];
     self.completionDropdown = dd;
 
-    // Fill: webContainer expands.
+    // Fill: webContainer expands between the two bars.
     [v setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
 }
 
@@ -226,9 +253,9 @@
     _activeTab = tab;   // assign ivar directly to avoid recursive setter call
     self.currentWebviewHolder = tab.view;
     tab.view.translatesAutoresizingMaskIntoConstraints = NO;
-    // Insert the web view BELOW the command/status overlays so they render
-    // on top of the page rather than being covered by it.
-    [self.webContainer addSubview:tab.view positioned:NSWindowBelow relativeTo:self.commandField];
+    // Insert the web view BELOW the completion dropdown so the dropdown and
+    // the docked bottom bar render on top of the page.
+    [self.webContainer addSubview:tab.view positioned:NSWindowBelow relativeTo:self.completionDropdown];
     [NSLayoutConstraint activateConstraints:@[
         [tab.view.leadingAnchor constraintEqualToAnchor:self.webContainer.leadingAnchor],
         [tab.view.trailingAnchor constraintEqualToAnchor:self.webContainer.trailingAnchor],
@@ -913,27 +940,11 @@
 - (void)showMessage:(NSString *)message error:(BOOL)error {
     self.statusField.stringValue = message ?: @"";
     self.statusField.textColor = error ? [NSColor systemRedColor] : [NSColor secondaryLabelColor];
-    // input-autohide mirrors vimb setting.c input_autohide: with it ON the
-    // status bar hides whenever empty; OFF keeps it always visible.
-    if ([self inputAutohide]) {
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-            ctx.duration = 0.15;
-            self.statusField.alphaValue = 1.0;
-        } completionHandler:nil];
-    } else {
-        self.statusField.alphaValue = 1.0;
-    }
+    // The docked status line is always visible, so a message just replaces
+    // the URL text and restores it (or the next message) after a pause.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if ([self.statusField.stringValue isEqualToString:message]) {
-            self.statusField.stringValue = @"";
-            if ([self inputAutohide]) {
-                [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-                    ctx.duration = 0.2;
-                    self.statusField.alphaValue = 0.0;
-                } completionHandler:nil];
-            } else {
-                [self updateStatus];
-            }
+            [self updateStatus];
         }
     });
 }
@@ -943,39 +954,36 @@
 }
 
 - (void)showCommandLine {
-    // Focus the field immediately (not after the fade completes) so the first
-    // keystroke lands in the command line and not the webview, then position
-    // the caret at the end of any seeded prompt (":", "/", "?").
+    // Reveal the docked input row (input-autohide collapses it while idle),
+    // then focus the field immediately (not after any animation) so the first
+    // keystroke lands in the command line and not the webview, and put the
+    // caret after any seeded prompt (":", "/", "?").
+    self.commandField.hidden = NO;
+    self.inputRowHeight.constant = 26;
+    [self.window.contentView layoutSubtreeIfNeeded];
     [self.window makeFirstResponder:self.commandField];
     NSText *editor = [self.commandField currentEditor];
     if (editor) {
         [editor setSelectedRange:NSMakeRange(editor.string.length, 0)];
     }
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-        ctx.duration = 0.15;
-        self.commandField.alphaValue = 1.0;
-    } completionHandler:nil];
 }
 
 - (void)hideCommandLine {
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-        ctx.duration = 0.12;
-        self.commandField.alphaValue = 0.0;
-    } completionHandler:nil];
+    [self.completionDropdown dismiss];
+    self.commandField.stringValue = @"";
+    if ([self inputAutohide]) {
+        self.inputRowHeight.constant = 0;
+        self.commandField.hidden = YES;
+    }
     if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
 }
 
 - (void)updateStatus {
     if (!self.activeTab) { return; }
     NSString *url = self.activeTab.url.absoluteString ?: self.activeTab.webView.URL.absoluteString ?: @"";
+    // The docked status line is always visible (GTK parity: the status bar
+    // persistently shows the URI); no hide/flash logic needed.
     self.statusField.stringValue = url;
-    // autohide ON: the bar only appears transiently (messages), so keep the
-    // URL bar hidden; OFF: show the URL persistently (always-visible bar).
-    if ([self inputAutohide]) {
-        self.statusField.alphaValue = 0.0;
-    } else {
-        self.statusField.alphaValue = 1.0;
-    }
     [self updateSettingsIndicator];
 }
 
@@ -986,7 +994,7 @@
     VimbConfig *cfg = [VimbConfig shared];
     BOOL show = [cfg getBool:@"status-bar-show-settings" defaultValue:NO];
     self.settingsIndicator.hidden = !show;
-    if (!show) { return; }
+    if (!show) { self.settingsIndicator.stringValue = @""; return; }
     NSString *cookie = [cfg getString:@"cookie-accept" defaultValue:@"always"];
     unichar ck = [cookie isEqualToString:@"always"] ? 'A' : ([cookie isEqualToString:@"origin"] ? '@' : 'a');
     unichar tk[8];
@@ -1036,7 +1044,6 @@
     // progress indicator is not available on this SDK.
     if (view == self.activeTab.webView && progress > 0.0 && progress < 1.0) {
         self.statusField.stringValue = [NSString stringWithFormat:@"loading… %d%%", (int)(progress * 100)];
-        if (![self inputAutohide]) { self.statusField.alphaValue = 1.0; }
     }
 }
 
@@ -1210,8 +1217,7 @@
 - (void)vimOpenPrompt:(NSString *)prompt mode:(VimMode)mode {
     if (mode == VimModeHint) {
         // Hint mode keeps the webview focused so hint keys route to JS.
-        [self.commandField.animator setAlphaValue:0.0];
-        if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
+        [self hideCommandLine];
         return;
     }
     self.commandPrefix = prompt;
@@ -1653,8 +1659,7 @@
 - (void)vimHintFire { [self.activeTab.webView hintFire]; }
 - (void)vimShowMessage:(NSString *)message error:(BOOL)error { [self showMessage:message error:error]; }
 - (void)vimFocusWebView {
-    if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
-    [self.commandField.animator setAlphaValue:0.0];
+    [self hideCommandLine];
 }
 
 #pragma mark - Command field (NSTextFieldDelegate)
@@ -1733,16 +1738,13 @@
                 // (still focused) so it can be corrected/continued.
                 [self.window makeFirstResponder:self.commandField];
             } else {
-                [self.commandField.animator setAlphaValue:0.0];
-                [self.window makeFirstResponder:self.activeTab.view];
+                [self hideCommandLine];
             }
             return YES;
         }
         if (commandSelector == @selector(cancelOperation:)) {
-            [self.completionDropdown dismiss];
-            [self.commandField.animator setAlphaValue:0.0];
             [self.vim reset];
-            [self.window makeFirstResponder:self.activeTab.view];
+            [self hideCommandLine];
             return YES;
         }
         if (commandSelector == @selector(insertTab:)) {
@@ -1760,9 +1762,8 @@
 #pragma mark - VimbCommandFieldDelegate
 
 - (void)commandFieldRequestedCancel:(VimbCommandField *)field {
-    [self.commandField.animator setAlphaValue:0.0];
     [self.vim reset];
-    if (self.activeTab) { [self.window makeFirstResponder:self.activeTab.view]; }
+    [self hideCommandLine];
 }
 
 - (nullable NSString *)commandField:(VimbCommandField *)field registerContentForKey:(unichar)key {
@@ -1902,10 +1903,11 @@
         [candidates addObject:[CompletionCandidate candidateWithValue:s detail:nil]];
     }
     [self.completionDropdown updateWithCandidates:candidates];
-    // Anchor just above the command field: pass a rect whose origin is the
-    // field's top edge (the class positions its top edge at rect.origin.y).
-    NSRect cf = self.commandField.frame;
-    NSRect anchor = NSMakeRect(cf.origin.x, cf.origin.y + cf.size.height, cf.size.width, cf.size.height);
+    // Anchor at the bottom edge of the web container (= top of the docked
+    // input row): the dropdown grows upward from there, over the page, like
+    // the GTK completion box stacked above the input line. Width matches the
+    // command field; the class clamps the frame inside the container.
+    NSRect anchor = NSMakeRect(10, 0, self.webContainer.bounds.size.width - 22, 0);
     [self.completionDropdown presentRelativeToRect:anchor inView:self.webContainer];
 }
 
@@ -2010,8 +2012,7 @@
     if ((res & VimbExCmdResultKeepInput) && m == VimModeCommand) {
         [self.window makeFirstResponder:self.commandField];
     } else {
-        [self.commandField.animator setAlphaValue:0.0];
-        [self.window makeFirstResponder:self.activeTab.view];
+        [self hideCommandLine];
     }
 }
 
