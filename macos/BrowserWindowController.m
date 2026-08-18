@@ -8,6 +8,7 @@
 #import "VimbHintEngine.h"
 #import "VimbCommandField.h"
 #import "VimbWindow.h"
+#import "VimbTaskRunner.h"
 #import "VimbEditor.h"
 #import "VimbBookmarkBrowser.h"
 #import "CompletionDropdown.h"
@@ -648,27 +649,16 @@
     }
     if (async) {
         // :shellcmd! — fire-and-forget async spawn (GTK g_spawn_command_line_async).
-        NSTask *task = [[NSTask alloc] init];
-        task.executableURL = [NSURL fileURLWithPath:@"/bin/sh"];
-        task.arguments = @[ @"-c", trimmed ];
-        @try {
-            [task launch];
-        } @catch (NSException *e) {
-            [self showMessage:[@"shell: " stringByAppendingString:e.reason] error:YES];
+        NSError *err = nil;
+        if (![VimbTaskRunner runAsync:trimmed environment:nil error:&err]) {
+            [self showMessage:[@"shell: " stringByAppendingString:err.localizedDescription] error:YES];
         }
         return;
     }
-    NSTask *task = [[NSTask alloc] init];
-    task.executableURL = [NSURL fileURLWithPath:@"/bin/sh"];
-    task.arguments = @[ @"-c", trimmed ];
-    task.standardOutput = [NSPipe pipe];
-    task.standardError = [NSPipe pipe];
+    // Output is drained asynchronously by the runner — a child writing more
+    // than one pipe buffer can never deadlock the termination handler.
     __weak typeof(self) weakSelf = self;
-    [task setTerminationHandler:^(NSTask *t) {
-        NSData *outData = [[t.standardOutput fileHandleForReading] readDataToEndOfFile];
-        NSData *errData = [[t.standardError fileHandleForReading] readDataToEndOfFile];
-        NSString *out = [[NSString alloc] initWithData:outData encoding:NSUTF8StringEncoding];
-        NSString *err = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding];
+    [VimbTaskRunner run:trimmed environment:nil completion:^(NSString *out, NSString *err, int status) {
         NSString *msg;
         BOOL isError = NO;
         if (err.length) {
@@ -677,22 +667,15 @@
         } else if (out.length) {
             msg = out;
         } else {
-            msg = [NSString stringWithFormat:@"shell exited %d", t.terminationStatus];
+            msg = [NSString stringWithFormat:@"shell exited %d", status];
         }
         NSString *clean = [msg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (clean.length) {
-                [weakSelf showMessage:clean error:isError];
-            } else {
-                [weakSelf showMessage:[NSString stringWithFormat:@"shell exited %d", t.terminationStatus] error:NO];
-            }
-        });
+        if (clean.length) {
+            [weakSelf showMessage:clean error:isError];
+        } else {
+            [weakSelf showMessage:[NSString stringWithFormat:@"shell exited %d", status] error:NO];
+        }
     }];
-    NSError *launchErr = nil;
-    [task launchAndReturnError:&launchErr];
-    if (launchErr) {
-        [self showMessage:[@"shell launch failed: " stringByAppendingString:launchErr.localizedDescription] error:YES];
-    }
 }
 - (void)exClearData:(NSString *)arg {
     // :cleardata [types] or by default all types (port of ex_cleardata).

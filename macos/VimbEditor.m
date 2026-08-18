@@ -1,4 +1,5 @@
 #import "VimbEditor.h"
+#import "VimbTaskRunner.h"
 
 @implementation VimbEditor
 
@@ -38,16 +39,10 @@
     NSTimeInterval timeout = self.editorTimeout;
     NSDate *spawnDate = [NSDate date];
 
-    // Substitute %s (or append the path).
-    NSString *expanded = editorCommand;
-    if ([editorCommand containsString:@"%s"]) {
-        expanded = [editorCommand stringByReplacingOccurrencesOfString:@"%s"
-                                                            withString:path
-                                                               options:0
-                                                                 range:[editorCommand rangeOfString:@"%s"]];
-    } else {
-        expanded = [NSString stringWithFormat:@"%@ '%@'", editorCommand, path];
-    }
+    // Substitute %s (or append the path). The path is shell-quoted by the
+    // shared template expander (single quotes can't appear in our generated
+    // temp names, but quote anyway — one code path, no special cases).
+    NSString *expanded = [VimbTaskRunner expandTemplate:editorCommand value:path];
 
     NSTask *task = [[NSTask alloc] init];
     task.launchPath = @"/bin/sh";

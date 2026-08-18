@@ -12,6 +12,7 @@
 #import "VimbEngine.h"
 #import "VimbAutocmd.h"
 #import "VimbHandler.h"
+#import "VimbTaskRunner.h"
 #import "VimbEditor.h"
 #import "VimbHintEngine.h"
 #import "VimbPermissionPolicy.h"
@@ -924,16 +925,97 @@ static void test_handler_handle_uri_returns(void) {
 // Every '%s' is substituted (g_strdup_printf parity); no '%s' -> append.
 static void test_handler_expand_all_s(void) {
     TEST_ASSERT_EQ_STR([VimbHandler expandCommand:@"open -a Mail %s" forURI:@"mailto:a@b"],
-                       @"open -a Mail mailto:a@b");
-    // Two '%s' -> both replaced.
+                       @"open -a Mail 'mailto:a@b'");
+    // Two '%s' -> only the first is replaced (printf %s parity: the URI is
+    // one argument, GTK g_strdup_printf(handler, uri) also fills only %s).
     TEST_ASSERT_EQ_STR([VimbHandler expandCommand:@"echo %s %s" forURI:@"u"],
-                       @"echo u u");
+                       @"echo 'u' %s");
     // No '%s' -> append with one space.
     TEST_ASSERT_EQ_STR([VimbHandler expandCommand:@"open" forURI:@"u"],
-                       @"open u");
+                       @"open 'u'");
+    // Injection safety: metacharacters stay inside the quotes.
+    TEST_ASSERT_EQ_STR([VimbHandler expandCommand:@"echo %s" forURI:@"a'; rm -rf /"],
+                       @"echo 'a'\\''; rm -rf /'");
 }
 
 #pragma mark - VimController coverage
+
+#pragma mark - VimbTaskRunner (shell quoting + safe spawn)
+
+static void test_task_runner_shell_quote(void) {
+    TEST_ASSERT_EQ_STR([VimbTaskRunner shellQuote:@"plain"], @"'plain'");
+    TEST_ASSERT_EQ_STR([VimbTaskRunner shellQuote:@""], @"''");
+    // Embedded single quote -> close, escaped quote, reopen.
+    TEST_ASSERT_EQ_STR([VimbTaskRunner shellQuote:@"a'b"], @"'a'\\''b'");
+    // Metacharacters are inert inside the quotes.
+    TEST_ASSERT_EQ_STR([VimbTaskRunner shellQuote:@"x; rm -rf /"], @"'x; rm -rf /'");
+    TEST_ASSERT_EQ_STR([VimbTaskRunner shellQuote:@"$(id) `id`"], @"'$(id) `id`'");
+    // Newline survives as data.
+    TEST_ASSERT_EQ_STR([VimbTaskRunner shellQuote:@"a\nb"], @"'a\nb'");
+}
+
+static void test_task_runner_expand_template(void) {
+    // %s substituted, quoted.
+    TEST_ASSERT_EQ_STR([VimbTaskRunner expandTemplate:@"/usr/bin/open %s" value:@"http://a b"],
+                       @"/usr/bin/open 'http://a b'");
+    // No %s -> appended, quoted.
+    TEST_ASSERT_EQ_STR([VimbTaskRunner expandTemplate:@"/usr/bin/open" value:@"u"],
+                       @"/usr/bin/open 'u'");
+    // Only the FIRST %s is replaced (printf parity).
+    TEST_ASSERT_EQ_STR([VimbTaskRunner expandTemplate:@"echo %s %s" value:@"v"],
+                       @"echo 'v' %s");
+    // The injection attempt that motivated this fix: a download URL becomes
+    // ONE shell argument, not two commands.
+    TEST_ASSERT_EQ_STR([VimbTaskRunner expandTemplate:@"/usr/bin/open %s" value:@"http://x/; touch /tmp/pwn"],
+                       @"/usr/bin/open 'http://x/; touch /tmp/pwn'");
+}
+
+static void test_task_runner_run_captures_output(void) {
+    // End-to-end: run a real command, verify stdout routing + exit status.
+    // Also exercises the async drain (no deadlock) with a chunked write.
+    // The completion lands on the MAIN queue, so the test must pump the main
+    // run loop (blocking the main thread on a semaphore would starve it).
+    __block int done = 0;
+    [VimbTaskRunner run:@"printf 'out1'; printf 'out2'; printf 'err' >&2; exit 7"
+            environment:nil
+             completion:^(NSString *out, NSString *err, int status) {
+        TEST_ASSERT_EQ_STR(out, @"out1out2");
+        TEST_ASSERT_EQ_STR(err, @"err");
+        TEST_ASSERT_EQ_I(status, 7);
+        done = 1;
+    }];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+    while (!done && [deadline timeIntervalSinceNow] > 0) {
+        [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode beforeDate:
+            [NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    TEST_ASSERT_TRUE(done);
+}
+
+static void test_task_runner_large_output_no_deadlock(void) {
+    // The regression the old code had: >64KB (pipe buffer) of output read
+    // only in the termination handler deadlocks. The async drain must let
+    // this complete quickly. ~80KB (2000 x 40) of output — over one pipe
+    // buffer. Pump the main run loop since completion is main-queue.
+    __block int seen = 0;
+    NSDate *start = [NSDate date];
+    [VimbTaskRunner run:@"i=0; while [ $i -lt 2000 ]; do printf '0123456789012345678901234567890123456789'; i=$((i+1)); done"
+            environment:nil
+             completion:^(NSString *out, NSString *err, int status) {
+        (void)err;
+        TEST_ASSERT_EQ_I(status, 0);
+        TEST_ASSERT_EQ_I((int)out.length, 2000 * 40);
+        seen = 1;
+    }];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:30];
+    while (!seen && [deadline timeIntervalSinceNow] > 0) {
+        [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode beforeDate:
+            [NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    TEST_ASSERT_TRUE(seen);
+    // The old code would hang forever; we must finish far under the 30s cap.
+    TEST_ASSERT_TRUE([start timeIntervalSinceNow] > -30);
+}
 
 static void test_controller_invoke_handlers(void) {
     BehavSpy *spy = newSpy();
@@ -1825,6 +1907,11 @@ int run_behavior_main(void) {
     RUN_TEST(test_handler_scheme_no_colon);
     RUN_TEST(test_handler_handle_uri_returns);
     RUN_TEST(test_handler_expand_all_s);
+
+    RUN_TEST(test_task_runner_shell_quote);
+    RUN_TEST(test_task_runner_expand_template);
+    RUN_TEST(test_task_runner_run_captures_output);
+    RUN_TEST(test_task_runner_large_output_no_deadlock);
     RUN_TEST(test_editor_round_trip);
     RUN_TEST(test_editor_async_readback);
 

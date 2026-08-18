@@ -1,4 +1,5 @@
 #import "VimbHandler.h"
+#import "VimbTaskRunner.h"
 
 @implementation VimbHandler
 
@@ -32,31 +33,21 @@
 }
 
 + (NSString *)expandCommand:(NSString *)command forURI:(NSString *)uri {
-    if ([command containsString:@"%s"]) {
-        return [command stringByReplacingOccurrencesOfString:@"%s" withString:uri];
-    }
-    return [NSString stringWithFormat:@"%@ %@", command, uri];
+    // Kept for API compatibility with tests; quoting now lives in
+    // VimbTaskRunner expandTemplate:value: (single source of truth).
+    return [VimbTaskRunner expandTemplate:command value:uri];
 }
 
 - (BOOL)handleURI:(NSString *)uri {
     NSString *cmd = [self commandForURI:uri];
     if (!cmd) { return NO; }
 
-    // Substitute the URI for every '%s' (g_strdup_printf in src/handler.c:73),
-    // else append it.
-    NSString *expanded = [VimbHandler expandCommand:cmd forURI:uri];
+    // Substitute the URI for '%s' (g_strdup_printf in src/handler.c:73),
+    // shell-quoted so a crafted URI cannot inject commands; else append it.
+    NSString *expanded = [VimbTaskRunner expandTemplate:cmd value:uri];
 
     // Run via /bin/sh -c (asynchronously) for %s-style command templates.
-    NSArray<NSString *> *argv = @[@"/bin/sh", @"-c", expanded];
-    NSTask *task = [[NSTask alloc] init];
-    task.launchPath = argv[0];
-    task.arguments = [argv subarrayWithRange:NSMakeRange(1, argv.count - 1)];
-    @try {
-        [task launch];
-    } @catch (NSException *e) {
-        return NO;
-    }
-    return YES;
+    return [VimbTaskRunner runAsync:expanded environment:nil error:nil];
 }
 
 - (NSArray<NSString *> *)schemes {
