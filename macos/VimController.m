@@ -385,14 +385,14 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     }
 
     if (self.phase == HBPhaseComplete) {
-        NSArray *mapped = [self commandForKey:(unichar)self.ukey];
-        if (mapped == nil) {
+        VimNormalCmd cmd = [self commandForKey:(unichar)self.ukey];
+        if (cmd == VimCmdNone) {
             // No command attached: let the platform handle the key. Reset the
             // pending parser state so a subsequent key isn't misparsed.
             [self resetParserAfterDispatch];
             return HBResultError;
         }
-        HBResult r = [self invokeHandler:mapped c:self.ukey k:self.lastKey k2:self.key2 k3:self.key3 cnt:self.count reg:self.reg delegate:d];
+        HBResult r = [self invokeHandler:cmd c:self.ukey k:self.lastKey k2:self.key2 k3:self.key3 cnt:self.count reg:self.reg delegate:d];
         if (r == HBResultComplete || r == HBResultError) {
             [self resetParserAfterDispatch];
         }
@@ -402,199 +402,193 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
     return res;
 }
 
-- (NSArray *)commandForKey:(unichar)key {
-    // Mirrors vimb's commands[] table in src/normal.c.
+// Typed dispatch (replaces the old string-array indirection): mirrors
+// vimb's commands[] table in src/normal.c, but the compiler now checks
+// every case in invokeHandler: below (-Wswitch enumerates VimNormalCmd).
+- (VimNormalCmd)commandForKey:(unichar)key {
     switch (key) {
-        case 0x01: return @[@"inc"];         // ^A
-        case 0x02: return @[@"scroll"];      // ^B
-        case 0x03: return @[@"stop"];        // ^C stop_loading (GTK normal_navigate)
-        case 0x04: return @[@"scroll"];      // ^D
-        case 0x06: return @[@"scroll"];      // ^F
-        case 0x09: return @[@"forward"];     // ^I  (next from history handled as forward)
-        case 0x0d: return @[@"fire"];        // ^M (Enter)
-        case 0x0f: return @[@"back"];        // ^O
-        case 0x10: return @[@"queuepop"];     // ^P (queue pop/load next)
-        case 0x11: return @[@"quit"];        // ^Q
-        case 0x15: return @[@"scroll"];      // ^U
-        case 0x1a: return @[@"pass"];        // ^Z
-        case 0x1b: return @[@"esc"];         // ESC
-        case 0x18: return @[@"dec"];         // ^X
+        case 0x01: return VimCmdInc;         // ^A
+        case 0x02: return VimCmdScroll;      // ^B
+        case 0x03: return VimCmdStop;        // ^C stop_loading (GTK normal_navigate)
+        case 0x04: return VimCmdScroll;      // ^D
+        case 0x06: return VimCmdScroll;      // ^F
+        case 0x09: return VimCmdForward;     // ^I  (next from history handled as forward)
+        case 0x0d: return VimCmdFire;        // ^M (Enter)
+        case 0x0f: return VimCmdBack;        // ^O
+        case 0x10: return VimCmdQueuePop;    // ^P (queue pop/load next)
+        case 0x11: return VimCmdQuit;        // ^Q
+        case 0x15: return VimCmdScroll;      // ^U
+        case 0x1a: return VimCmdPass;        // ^Z
+        case 0x1b: return VimCmdEsc;         // ESC
+        case 0x18: return VimCmdDec;         // ^X
         case '#': case '*':
-                        return @[@"searchsel"];
-        case '\'': return @[@"mark"];
-        case '/': case '?': return @[@"cmdline"];   // search prompts
-        case ':': return @[@"cmdline"];
-        case ';': return @[@"hint"];
-        case '$': case '0': return @[@"scroll"];
-        case 'F': case 'f': return @[@"cmdline"];   // f/F lead-in (find/hint follow)
+                        return VimCmdSearchSel;
+        case '\'': return VimCmdMark;
+        case '/': case '?': return VimCmdCmdline;   // search prompts
+        case ':': return VimCmdCmdline;
+        case ';': return VimCmdHint;
+        case '$': case '0': return VimCmdScroll;
+        case 'F': case 'f': return VimCmdCmdline;   // f/F lead-in (find/hint follow)
         case 'G':
-                        return @[@"scroll"];   // G scroll; H/M/L pass through (GTK NULL)
-        case 'N': case 'n': return @[@"search"];
+                        return VimCmdScroll;   // G scroll; H/M/L pass through (GTK NULL)
+        case 'N': case 'n': return VimCmdSearch;
         case 'O': case 'o': case 'T': case 't':
-                        return @[@"inputopen"];
-        case 'P': case 'p': return @[@"openclipboard"];
-        case 'R': return @[@"reloadbypass"];  // R reload_bypass_cache (GTK normal_navigate)
-        case 'r': return @[@"reload"];        // r reload
-        case 'U': case 'u': return @[@"home"];
-        case 'Y': case 'y': return @[@"yank"];
-        case '[': case ']': return @[@"prevnext"];
-        case 'g': return @[@"g_cmd"];
+                        return VimCmdInputOpen;
+        case 'P': case 'p': return VimCmdOpenClipboard;
+        case 'R': return VimCmdReloadBypass;  // R reload_bypass_cache (GTK normal_navigate)
+        case 'r': return VimCmdReload;        // r reload
+        case 'U': case 'u': return VimCmdHome;
+        case 'Y': case 'y': return VimCmdYank;
+        case '[': case ']': return VimCmdPrevNext;
+        case 'g': return VimCmdG;
         case 'h': case 'j': case 'k': case 'l':
-                        return @[@"scroll"];
-        case 'i': return @[@"focuslast"];
-        case 'm': return @[@"mark"];
-        case 'z': return @[@"zoom"];
-        default: return nil;
+                        return VimCmdScroll;
+        case 'i': return VimCmdFocusLast;
+        case 'm': return VimCmdMark;
+        case 'z': return VimCmdZoom;
+        default: return VimCmdNone;
     }
 }
 
 #pragma mark - Command handlers
 
-- (HBResult)invokeHandler:(NSArray *)sel c:(unichar)c k:(int)k k2:(unichar)k2 k3:(unichar)k3
+- (HBResult)invokeHandler:(VimNormalCmd)cmd c:(unichar)c k:(int)k k2:(unichar)k2 k3:(unichar)k3
                     cnt:(NSInteger)cnt reg:(int)reg delegate:(id<VimDelegate>)d {
-    NSString *name = sel[0];
-
-    if ([name isEqualToString:@"scroll"]) {
-        [d vimScrollMode:c count:(NSUInteger)cnt];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"reload"]) {
-        [d vimReload];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"reloadbypass"]) {
-        [d vimReloadBypassCache];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"back"]) { [d vimGoBack]; return HBResultComplete; }
-    if ([name isEqualToString:@"forward"]) { [d vimGoForward]; return HBResultComplete; }
-    if ([name isEqualToString:@"stop"]) { [d vimStop]; return HBResultComplete; }
-    if ([name isEqualToString:@"fire"]) {
-        [d vimFire];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"quit"]) {
-        [d vimQuit];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"pass"]) {
-        [d vimEnterPassThrough];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"esc"]) {
-        [self reset];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"inc"]) { [d vimIncrement:YES count:cnt]; return HBResultComplete; }
-    if ([name isEqualToString:@"dec"]) { [d vimIncrement:NO count:cnt]; return HBResultComplete; }
-    if ([name isEqualToString:@"searchsel"]) {
-        [d vimSearchSelectionForward:(c == '*')];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"search"]) {
-        NSInteger dir = (c == 'n') ? (cnt > 0 ? cnt : 1) : -(cnt > 0 ? cnt : 1);
-        [d vimSearchDirection:dir];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"mark"]) {
-        // m<char> sets a mark, '<char> jumps to it (vimb normal_mark).
-        if (k2) {
-            if (c == 'm') {
-                [d vimSetMark:k2];
-            } else {
-                [d vimJumpMark:k2];
-            }
-        }
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"cmdline"]) {
-        if (c == 'f' || c == 'F') {
-            // f: follow (current tab), F: follow in a new tab.
-            self.mode = VimModeHint;
-            [d vimOpenPrompt:@"" mode:VimModeHint];
-            [d vimEnterHints:(c == 'F') ? @"t" : @"o" gmode:NO];
-        } else if (c == '/' || c == '?') {
-            self.mode = VimModeSearch;
-            self.promptForMode = (c == '/') ? @"forward" : @"backward";
-            [d vimOpenPrompt:[NSString stringWithFormat:@"%c", c] mode:VimModeSearch];
-        } else {
-            self.mode = VimModeCommand;
-            [d vimOpenPrompt:@":" mode:VimModeCommand];
-        }
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"hint"]) {
-        // ';' + mode char (key2) chooses the hint action. Mirrors
-        // hints_parse_prompt: an invalid mode simply clears any hint state.
-        unichar hm = k2 ? k2 : 'o';
-        if (![VimbHintEngine validMode:hm gmode:NO]) {
-            [d vimToggleHints];
+    switch (cmd) {
+        case VimCmdScroll:
+            [d vimScrollMode:c count:(NSUInteger)cnt];
+            return HBResultComplete;
+        case VimCmdReload:
+            [d vimReload];
+            return HBResultComplete;
+        case VimCmdReloadBypass:
+            [d vimReloadBypassCache];
+            return HBResultComplete;
+        case VimCmdBack:
+            [d vimGoBack];
+            return HBResultComplete;
+        case VimCmdForward:
+            [d vimGoForward];
+            return HBResultComplete;
+        case VimCmdStop:
+            [d vimStop];
+            return HBResultComplete;
+        case VimCmdFire:
+            [d vimFire];
+            return HBResultComplete;
+        case VimCmdQuit:
+            [d vimQuit];
+            return HBResultComplete;
+        case VimCmdPass:
+            [d vimEnterPassThrough];
+            return HBResultComplete;
+        case VimCmdEsc:
             [self reset];
             return HBResultComplete;
+        case VimCmdInc:
+            [d vimIncrement:YES count:cnt];
+            return HBResultComplete;
+        case VimCmdDec:
+            [d vimIncrement:NO count:cnt];
+            return HBResultComplete;
+        case VimCmdSearchSel:
+            [d vimSearchSelectionForward:(c == '*')];
+            return HBResultComplete;
+        case VimCmdSearch: {
+            NSInteger dir = (c == 'n') ? (cnt > 0 ? cnt : 1) : -(cnt > 0 ? cnt : 1);
+            [d vimSearchDirection:dir];
+            return HBResultComplete;
         }
-        self.mode = VimModeHint;
-        [d vimOpenPrompt:@"" mode:VimModeHint];
-        [d vimEnterHints:[NSString stringWithFormat:@"%c", hm] gmode:NO];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"inputopen"]) {
-        // o/O/t/T : open prompt. Uppercase O/T pre-fills the current URI
-        // (GTK normal_input_open src/normal.c:566-580).
-        BOOL tab = (c == 't' || c == 'T');    // t/T -> tabopen, o/O -> open
-        BOOL withURI = (c == 'O' || c == 'T');
-        NSString *prefix = tab ? @"tabopen " : @"open ";
-        if (withURI && [d respondsToSelector:@selector(vimCurrentURI)]) {
-            NSString *uri = [d vimCurrentURI];
-            if (uri.length) { prefix = [prefix stringByAppendingString:uri]; }
+        case VimCmdMark:
+            // m<char> sets a mark, '<char> jumps to it (vimb normal_mark).
+            if (k2) {
+                if (c == 'm') {
+                    [d vimSetMark:k2];
+                } else {
+                    [d vimJumpMark:k2];
+                }
+            }
+            return HBResultComplete;
+        case VimCmdCmdline:
+            if (c == 'f' || c == 'F') {
+                // f: follow (current tab), F: follow in a new tab.
+                self.mode = VimModeHint;
+                [d vimOpenPrompt:@"" mode:VimModeHint];
+                [d vimEnterHints:(c == 'F') ? @"t" : @"o" gmode:NO];
+            } else if (c == '/' || c == '?') {
+                self.mode = VimModeSearch;
+                self.promptForMode = (c == '/') ? @"forward" : @"backward";
+                [d vimOpenPrompt:[NSString stringWithFormat:@"%c", c] mode:VimModeSearch];
+            } else {
+                self.mode = VimModeCommand;
+                [d vimOpenPrompt:@":" mode:VimModeCommand];
+            }
+            return HBResultComplete;
+        case VimCmdHint: {
+            // ';' + mode char (key2) chooses the hint action. Mirrors
+            // hints_parse_prompt: an invalid mode simply clears any hint state.
+            unichar hm = k2 ? k2 : 'o';
+            if (![VimbHintEngine validMode:hm gmode:NO]) {
+                [d vimToggleHints];
+                [self reset];
+                return HBResultComplete;
+            }
+            self.mode = VimModeHint;
+            [d vimOpenPrompt:@"" mode:VimModeHint];
+            [d vimEnterHints:[NSString stringWithFormat:@"%c", hm] gmode:NO];
+            return HBResultComplete;
         }
-        self.mode = VimModeCommand;
-        [d vimOpenPrompt:prefix mode:VimModeCommand];
-        return HBResultComplete;
+        case VimCmdInputOpen: {
+            // o/O/t/T : open prompt. Uppercase O/T pre-fills the current URI
+            // (GTK normal_input_open src/normal.c:566-580).
+            BOOL tab = (c == 't' || c == 'T');    // t/T -> tabopen, o/O -> open
+            BOOL withURI = (c == 'O' || c == 'T');
+            NSString *prefix = tab ? @"tabopen " : @"open ";
+            if (withURI && [d respondsToSelector:@selector(vimCurrentURI)]) {
+                NSString *uri = [d vimCurrentURI];
+                if (uri.length) { prefix = [prefix stringByAppendingString:uri]; }
+            }
+            self.mode = VimModeCommand;
+            [d vimOpenPrompt:prefix mode:VimModeCommand];
+            return HBResultComplete;
+        }
+        case VimCmdOpenClipboard:
+            [d vimOpenClipboard:[NSString stringWithFormat:@"%c", (self.reg ? self.reg : '0')]];
+            return HBResultComplete;
+        case VimCmdHome:
+            [d vimOpenHome];
+            return HBResultComplete;
+        case VimCmdYank: {
+            // y["x]/Y["x]: yank URI/selection into the pending register ('"' if
+            // none), mirroring normal_yank -> command_yank(reg).
+            unichar reg = self.reg ? self.reg : '"';
+            if (c == 'Y') { [d vimYankSelection:reg]; }
+            else { [d vimYankURI:reg]; }
+            return HBResultComplete;
+        }
+        case VimCmdFocusLast:
+            [d vimFocusLastActive];
+            return HBResultComplete;
+        case VimCmdZoom:
+            // z + iIoOz: in/out/reset (normal_zoom). Uses the secondary key.
+            [d vimZoomKey:k2 count:cnt];
+            return HBResultComplete;
+        case VimCmdQueuePop:
+            // ^P: pop and load the next entry from the queue (normal_queue).
+            [d vimQueuePop];
+            return HBResultComplete;
+        case VimCmdPrevNext:
+            // GTK normal_prevnext (src/normal.c:760-776) returns RESULT_COMPLETE
+            // (the hint follow-link body is #if 0), so the key is consumed.
+            return HBResultComplete;
+        case VimCmdG:
+            return [self invokeGCmd:c k2:k2 k3:k3 cnt:cnt delegate:d];
+        case VimCmdNone:
+            // Unreachable in practice (checked at the call site), but listed
+            // so the switch is exhaustive: adding a new VimNormalCmd without a
+            // case here is a -Wswitch warning, not a silent fallthrough.
+            return HBResultError;
     }
-    if ([name isEqualToString:@"openclipboard"]) {
-        [d vimOpenClipboard:[NSString stringWithFormat:@"%c", (self.reg ? self.reg : '0')]];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"home"]) {
-        [d vimOpenHome];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"yank"]) {
-        // y["x]/Y["x]: yank URI/selection into the pending register ('"' if
-        // none), mirroring normal_yank -> command_yank(reg).
-        unichar reg = self.reg ? self.reg : '"';
-        if (c == 'Y') { [d vimYankSelection:reg]; }
-        else { [d vimYankURI:reg]; }
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"focuslast"]) {
-        [d vimFocusLastActive];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"zoom"]) {
-        // z + iIoOz: in/out/reset (normal_zoom). Uses the secondary key.
-        [d vimZoomKey:k2 count:cnt];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"queuepop"]) {
-        // ^P: pop and load the next entry from the queue (normal_queue).
-        [d vimQueuePop];
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"prevnext"]) {
-        // GTK normal_prevnext (src/normal.c:760-776) returns RESULT_COMPLETE
-        // (the hint follow-link body is #if 0), so the key is consumed.
-        return HBResultComplete;
-    }
-    if ([name isEqualToString:@"g_cmd"]) {
-        return [self invokeGCmd:c k2:k2 k3:k3 cnt:cnt delegate:d];
-    }
-
-    return HBResultError;
-}
-
-- (void)showUnsupported:(NSString *)name d:(id<VimDelegate>)d {
-    [d vimShowMessage:[NSString stringWithFormat:@"%@ not yet supported on native backend", name] error:YES];
 }
 
 - (HBResult)invokeGCmd:(unichar)key k2:(unichar)k2 k3:(unichar)k3 cnt:(NSInteger)cnt delegate:(id<VimDelegate>)d {

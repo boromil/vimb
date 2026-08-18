@@ -10,6 +10,39 @@ typedef NS_ENUM(NSInteger, VimMode) {
     VimModePassThrough // ^Z: all keys to the page except ESC
 };
 
+// Normal-mode command identifiers, one per entry in normal.c's commands[]
+// table. VimController maps a parsed key to one of these and dispatches via
+// a switch (compiler-checked, -Wswitch-exhaustive) instead of string names.
+typedef NS_ENUM(NSInteger, VimNormalCmd) {
+    VimCmdNone = 0,     // no command bound to the key (pass to platform)
+    VimCmdScroll,
+    VimCmdReload,
+    VimCmdReloadBypass,
+    VimCmdBack,
+    VimCmdForward,
+    VimCmdStop,
+    VimCmdFire,
+    VimCmdQuit,
+    VimCmdPass,
+    VimCmdEsc,
+    VimCmdInc,
+    VimCmdDec,
+    VimCmdSearchSel,
+    VimCmdSearch,
+    VimCmdMark,
+    VimCmdCmdline,
+    VimCmdHint,
+    VimCmdInputOpen,
+    VimCmdOpenClipboard,
+    VimCmdHome,
+    VimCmdYank,
+    VimCmdFocusLast,
+    VimCmdZoom,
+    VimCmdQueuePop,
+    VimCmdPrevNext,
+    VimCmdG,
+};
+
 // Delegate implemented by the UI (BrowserWindowController). Keeps the vim
 // state machine independent of AppKit/WKWebView. Mirrors the actions invoked
 // by vimb's normal.c command handlers.
