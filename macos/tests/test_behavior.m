@@ -708,6 +708,34 @@ static void test_ex_map_commands_all_modes(void) {
     TEST_ASSERT_TRUE(sawMapErr);
 }
 
+static void test_ex_config_injection(void) {
+    // VimbEx.config isolates :map/:shortcut mutations from the shared config.
+    BehavActor *a = newActor();
+    VimbEx *ex = [[VimbEx alloc] init];
+    ex.actor = a;
+    VimbConfig *iso = [[VimbConfig alloc] init];
+    ex.config = iso;
+    VimbConfig *shared = [VimbConfig shared];
+    NSUInteger sharedMapsBefore = [shared.mappings[@"n"] count];
+
+    [ex runCommand:@"nmap zz ZZ"];
+    TEST_ASSERT_EQ_I([iso.mappings[@"n"] count], 1);
+    TEST_ASSERT_EQ_I([shared.mappings[@"n"] count], (int)sharedMapsBefore);
+    NSDictionary *res = [iso resolveMappingForMode:@"n" buffer:[iso convertKeyString:@"zz"]];
+    TEST_ASSERT_EQ_STR(res[@"rhs"], [iso convertKeyString:@"ZZ"]);
+
+    [ex runCommand:@"nunmap zz"];
+    TEST_ASSERT_EQ_I([iso.mappings[@"n"] count], 0);
+    TEST_ASSERT_EQ_I([shared.mappings[@"n"] count], (int)sharedMapsBefore);
+
+    // Shortcuts likewise route to the injected config. ("dd" is a built-in
+    // default engine, so use a non-default name and compare snapshots.)
+    NSString *sharedDDBefore = shared.shortcuts[@"mysc"];
+    [ex runCommand:@"shortcut-add mysc https://duckduckgo.com/?q=%s"];
+    TEST_ASSERT_EQ_STR(iso.shortcuts[@"mysc"], @"https://duckduckgo.com/?q=%s");
+    TEST_ASSERT_TRUE(shared.shortcuts[@"mysc"] == sharedDDBefore);
+}
+
 static void test_ex_unknown_command(void) {
     BehavActor *a = newActor();
     VimbEx *ex = [[VimbEx alloc] init];
@@ -1920,6 +1948,7 @@ int run_behavior_main(void) {
     RUN_TEST(test_ex_autocmd_augroup);
     RUN_TEST(test_ex_shortcut_commands);
     RUN_TEST(test_ex_map_commands_all_modes);
+    RUN_TEST(test_ex_config_injection);
     RUN_TEST(test_ex_unknown_command);
     RUN_TEST(test_ex_ambiguous_command);
     RUN_TEST(test_ex_abbreviation_resolution);

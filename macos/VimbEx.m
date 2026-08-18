@@ -42,6 +42,13 @@ static NSString *TypeForName(NSString *name) {
 
 @implementation VimbEx
 
+// Injected config if set, else the shared singleton. Keeps bare
+// [[VimbEx alloc] init] (19 existing test sites) mutating the same config
+// the app uses, while tests can pass an isolated instance.
+- (VimbConfig *)config {
+    return _config ?: [VimbConfig shared];
+}
+
 - (NSArray<NSString *> *)commandNames {
     return [VimbExParser commandNames];
 }
@@ -187,7 +194,7 @@ static NSString *TypeForName(NSString *name) {
     }
     if ([type isEqualToString:@"register"]) { [a exRegisterList]; return VimbExCmdResultSuccess | VimbExCmdResultKeepInput; }
     if ([type isEqualToString:@"autocmd"]) {
-        VimbAutocmd *au = [VimbConfig shared].autocmd;
+        VimbAutocmd *au = self.config.autocmd;
         __weak typeof(self) weakSelf = self;
         au.executor = ^(NSString *excmd) {
             [weakSelf runCommand:excmd];
@@ -348,13 +355,13 @@ static NSString *TypeForName(NSString *name) {
 
 - (VimbExCmdResult)handleUnmapCommand:(NSString *)full arg:(NSString *)arg {
     NSString *mode = [self mapModeForCommand:full];
-    NSString *lhs = [[VimbConfig shared] convertKeyString:
+    NSString *lhs = [self.config convertKeyString:
         [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]];
     if (lhs.length == 0) {
         [self.actor exMessage:@"unmap requires a key" error:YES];
         return VimbExCmdResultError | VimbExCmdResultKeepInput;
     }
-    BOOL removed = [[VimbConfig shared] removeMappingForMode:mode lhs:lhs];
+    BOOL removed = [self.config removeMappingForMode:mode lhs:lhs];
     if (!removed) {
         // Not an error in vim; keep the command line quiet as vimb does.
     }
@@ -380,7 +387,7 @@ static NSString *TypeForName(NSString *name) {
             [a exMessage:@"shortcut-add requires a name and a url" error:YES];
             return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
-        [VimbConfig shared].shortcuts[key] = url;
+        self.config.shortcuts[key] = url;
         [a exMessage:[NSString stringWithFormat:@"shortcut %@ = %@", key, url] error:NO];
     } else {
         NSString *key = [arg stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
@@ -391,14 +398,13 @@ static NSString *TypeForName(NSString *name) {
             return VimbExCmdResultError | VimbExCmdResultKeepInput;
         }
         if ([full isEqualToString:@"shortcut-default"]) {
-            [VimbConfig shared].defaultShortcut = key;
+            self.config.defaultShortcut = key;
             // The default opened page follows the selected search engine.
-            [VimbConfig shared].settings[@"home-page"] =
-                [[VimbConfig shared] searchEngineMainPage];
+            self.config.settings[@"home-page"] = [self.config searchEngineMainPage];
             [a exMessage:[NSString stringWithFormat:@"default shortcut is %@", key] error:NO];
         } else { // shortcut-remove
-            BOOL removed = [VimbConfig shared].shortcuts[key] != nil;
-            [[VimbConfig shared].shortcuts removeObjectForKey:key];
+            BOOL removed = self.config.shortcuts[key] != nil;
+            [self.config.shortcuts removeObjectForKey:key];
             [a exMessage:removed ? @"shortcut removed" : @"shortcut not found" error:!removed];
         }
     }
@@ -414,17 +420,17 @@ static NSString *TypeForName(NSString *name) {
         [self.actor exMessage:@"map requires a lhs and a rhs" error:YES];
         return VimbExCmdResultError | VimbExCmdResultKeepInput;
     }
-    NSString *lhs = [[VimbConfig shared] convertKeyString:parts[0]];
+    NSString *lhs = [self.config convertKeyString:parts[0]];
     // rhs keeps its original spacing (may contain spaces / ex command).
     NSString *rawRhs = [arg substringFromIndex:parts[0].length];
     rawRhs = [rawRhs stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    NSString *rhs = [[VimbConfig shared] convertKeyString:rawRhs];
+    NSString *rhs = [self.config convertKeyString:rawRhs];
 
     if (lhs.length == 0 || rhs.length == 0) {
         [self.actor exMessage:@"map requires a non-empty lhs and rhs" error:YES];
         return VimbExCmdResultError | VimbExCmdResultKeepInput;
     }
-    [[VimbConfig shared] addMappingForMode:mode lhs:lhs rhs:rhs noremap:noremap];
+    [self.config addMappingForMode:mode lhs:lhs rhs:rhs noremap:noremap];
     return VimbExCmdResultSuccess;
 }
 

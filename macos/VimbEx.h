@@ -2,6 +2,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class VimbConfig;
+
 // Result/lifecycle bitmask returned by VimbEx.runCommand: and reported through
 // the optional actor result channel. Mirrors src/main.h's VbCmdResult:
 // CMD_ERROR=0, CMD_SUCCESS=0x01, CMD_KEEPINPUT=0x02 ("don't clear the inputbox").
@@ -57,6 +59,10 @@ typedef NS_OPTIONS(NSUInteger, VimbExCmdResult) {
 
 @interface VimbEx : NSObject
 @property(nonatomic, weak, nullable) id<VimbExActor> actor;
+// Config the engine mutates for :map/:unmap/:shortcut-*. App code uses the
+// shared config; tests inject an isolated instance. Nil falls back to
+// [VimbConfig shared] so bare [[VimbEx alloc] init] keeps working.
+@property(nonatomic, strong, nullable) VimbConfig *config;
 // Executes a command line; returns the result bitmask (VimbExCmdResult).
 - (VimbExCmdResult)runCommand:(NSString *)command;
 - (NSString *)expandToken:(NSString *)token;    // % / # expansion

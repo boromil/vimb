@@ -70,6 +70,7 @@
         _vim.delegate = self;
         _exEngine = [[VimbEx alloc] init];
         _exEngine.actor = self;
+        _exEngine.config = [VimbConfig shared];   // explicit; matches the lazy fallback
         _registers = [[VimbRegisters alloc] init];
         _marks = [[VimbMarks alloc] init];
         _pendingMarkY = [NSMutableDictionary dictionary];
