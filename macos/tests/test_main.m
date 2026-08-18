@@ -196,6 +196,48 @@ static void test_storage_dirs(void) {
     [s clear]; // touches only that handle path, not real data.
 }
 
+// Debounced persistence: mutations are visible via -lines immediately (the
+// cache), hit disk after the flush delay, and +flushAll forces pending
+// writes. This is the regression test for "every navigation rewrote the
+// whole history file synchronously".
+static void test_storage_cache_and_flushAll(void) {
+    VimbStorage *s = [VimbStorage storageInTempDirectoryWithName:@"cache1"];
+    [s clear];
+    NSTimeInterval saved = VimbStorage.flushDelay;
+    VimbStorage.flushDelay = 5.0; // long debounce: nothing reaches disk yet
+
+    [s prepend:@"one" max:10];
+    [s prepend:@"two" max:10];
+    // Cache serves reads without touching the file.
+    TEST_ASSERT_EQ_I((int)s.lines.count, 2);
+    TEST_ASSERT_EQ_STR(s.top, @"two");
+    // Not yet on disk (debounce pending).
+    NSString *onDisk = [NSString stringWithContentsOfFile:s.dir encoding:NSUTF8StringEncoding error:nil];
+    TEST_ASSERT_TRUE(onDisk == nil);
+
+    // flushAll forces it out now.
+    [VimbStorage flushAll];
+    onDisk = [NSString stringWithContentsOfFile:s.dir encoding:NSUTF8StringEncoding error:nil];
+    TEST_ASSERT_NOTNULL(onDisk);
+    TEST_ASSERT_TRUE([onDisk hasPrefix:@"two\none"]);
+
+    VimbStorage.flushDelay = saved;
+    [s clear];
+}
+
+// A fresh instance sees another instance's flushed data (load-once cache is
+// per instance, not global).
+static void test_storage_reload_after_flush(void) {
+    VimbStorage *a = [VimbStorage storageInTempDirectoryWithName:@"cache2"];
+    [a clear];
+    VimbStorage.flushDelay = 0;
+    [a prepend:@"persisted" max:5];
+    VimbStorage *b = [VimbStorage storageInTempDirectoryWithName:@"cache2"];
+    TEST_ASSERT_EQ_STR(b.top, @"persisted");
+    [a clear];
+    [b clear];
+}
+
 #pragma mark - VimbConfig
 
 static void test_config_load_defaults(void) {
@@ -962,6 +1004,8 @@ int main(void) {
     RUN_TEST(test_storage_push_matches_prepend);
     RUN_TEST(test_storage_append_fifo);
     RUN_TEST(test_storage_dirs);
+    RUN_TEST(test_storage_cache_and_flushAll);
+    RUN_TEST(test_storage_reload_after_flush);
     RUN_TEST(test_config_load_defaults);
     RUN_TEST(test_config_apply_setting_getters);
     RUN_TEST(test_config_validate_setting);

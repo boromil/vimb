@@ -1,6 +1,44 @@
 #import "VimbStorage.h"
 
-@implementation VimbStorage
+// Default debounce interval for disk writes.
+static const NSTimeInterval kVimbStorageDefaultFlushDelay = 0.5;
+
+// Per-path write serialization: atomic writes are per-file safe, but two
+// stores pointing at the SAME path (or a flush racing a flush) must not
+// interleave. Writes hop to a private serial queue; ordering per path is
+// preserved because the payload is captured by value at schedule time.
+static NSString *storageWriteQueueLabel = @"org.vimb.storage.write";
+static dispatch_queue_t storageWriteQueue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create([storageWriteQueueLabel UTF8String], DISPATCH_QUEUE_SERIAL);
+    });
+    return q;
+}
+
+// Tracks live store instances for +flushAll (weak, so stores are not kept
+// alive by the registry; main-thread only, same as the rest of the API).
+static NSHashTable< VimbStorage * > *liveStores(void) {
+    static NSHashTable *table;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        table = [NSHashTable weakObjectsHashTable];
+    });
+    return table;
+}
+
+static NSTimeInterval _flushDelay = kVimbStorageDefaultFlushDelay;
+
+@implementation VimbStorage {
+    NSMutableArray<NSString *> *_cache;   // lazy: nil until first read
+    BOOL _dirty;                          // cache has changes not on disk
+    dispatch_source_t _debounce;          // coalesces rapid mutations
+}
+
+// Class-property accessors (class properties are not auto-synthesized).
++ (NSTimeInterval)flushDelay { return _flushDelay; }
++ (void)setFlushDelay:(NSTimeInterval)d { _flushDelay = d; }
 
 + (NSString *)appSupportDir {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
@@ -29,6 +67,9 @@
         [[NSFileManager defaultManager] createDirectoryAtPath:[dir stringByDeletingLastPathComponent]
                                   withIntermediateDirectories:YES attributes:nil error:nil];
         _dir = dir;
+        @synchronized(liveStores()) {
+            [liveStores() addObject:self];
+        }
     }
     return self;
 }
@@ -42,34 +83,103 @@
     return [[VimbStorage alloc] initWithName:name directory:baseDir];
 }
 
-- (NSArray<NSString *> *)lines {
-    NSString *content = [NSString stringWithContentsOfFile:self.dir encoding:NSUTF8StringEncoding error:nil];
-    if (!content) { return @[]; }
-    NSMutableArray *r = [NSMutableArray array];
-    for (NSString *l in [content componentsSeparatedByString:@"\n"]) {
-        if (l.length) { [r addObject:l]; }
+#pragma mark - Cache
+
+// All access is main-thread (every caller lives on the main thread; tests
+// are single-threaded). The assert documents that contract cheaply.
+- (NSMutableArray<NSString *> *)cachedLines {
+    NSAssert([NSThread isMainThread], @"VimbStorage is main-thread only");
+    if (!_cache) {
+        NSString *content = [NSString stringWithContentsOfFile:self.dir encoding:NSUTF8StringEncoding error:nil];
+        NSMutableArray *r = [NSMutableArray array];
+        if (content) {
+            for (NSString *l in [content componentsSeparatedByString:@"\n"]) {
+                if (l.length) { [r addObject:l]; }
+            }
+        }
+        _cache = r;
     }
-    return r;
+    return _cache;
 }
 
+- (NSArray<NSString *> *)lines {
+    return [self cachedLines];
+}
+
+- (void)markDirty {
+    _dirty = YES;
+    if (self.class.flushDelay <= 0) {
+        // Tests / immediate mode: no timer, write synchronously.
+        [self flush:nil];
+        return;
+    }
+    // Recreate the debounce timer for each burst (resuming an already-active
+    // dispatch source would over-resume and trap in libdispatch).
+    if (_debounce) {
+        dispatch_source_cancel(_debounce);
+        _debounce = nil;
+    }
+    _debounce = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                       dispatch_get_main_queue());
+    __weak typeof(self) weakSelf = self;
+    dispatch_source_set_event_handler(_debounce, ^{
+        [weakSelf flush:nil];
+    });
+    dispatch_source_set_timer(_debounce,
+                              dispatch_time(DISPATCH_TIME_NOW, (int64_t)(self.class.flushDelay * NSEC_PER_SEC)),
+                              DISPATCH_TIME_FOREVER, 0);
+    dispatch_resume(_debounce);
+}
+
+- (BOOL)flush:(NSError * _Nullable * _Nullable)error {
+    NSAssert([NSThread isMainThread], @"VimbStorage is main-thread only");
+    if (_debounce) {
+        dispatch_source_cancel(_debounce);
+        _debounce = nil;
+    }
+    if (!_dirty) { return YES; }
+    NSArray<NSString *> *snapshot = [_cache copy];
+    _dirty = NO;
+    __block BOOL ok = YES;
+    __block NSError *writeErr = nil;
+    dispatch_sync(storageWriteQueue(), ^{
+        NSString *joined = [snapshot componentsJoinedByString:@"\n"];
+        if (joined.length) { joined = [joined stringByAppendingString:@"\n"]; }
+        ok = [joined writeToFile:self.dir atomically:YES encoding:NSUTF8StringEncoding error:&writeErr];
+    });
+    if (!ok && error) { *error = writeErr; }
+    return ok;
+}
+
++ (void)flushAll {
+    NSArray<VimbStorage *> *stores;
+    @synchronized(liveStores()) {
+        stores = [liveStores() allObjects];
+    }
+    for (VimbStorage *s in stores) {
+        [s flush:nil];
+    }
+}
+
+#pragma mark - Mutations (cache-first, debounced persist)
+
 - (void)writeAll:(NSArray<NSString *> *)lines {
-    NSString *joined = [lines componentsJoinedByString:@"\n"];
-    if (joined.length) { joined = [joined stringByAppendingString:@"\n"]; }
-    [joined writeToFile:self.dir atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSMutableArray *copy = [lines mutableCopy];
+    _cache = copy;
+    [self markDirty];
 }
 
 - (void)prepend:(NSString *)line max:(NSUInteger)max {
-    NSMutableArray *ls = [self.lines mutableCopy];
+    NSMutableArray *ls = [self cachedLines];
     [ls removeObject:line];
     [ls insertObject:line atIndex:0];
     if (max > 0 && ls.count > max) { [ls removeObjectsInRange:NSMakeRange(max, ls.count - max)]; }
-    [self writeAll:ls];
+    [self markDirty];
 }
 
 - (void)append:(NSString *)line {
-    NSMutableArray *ls = [self.lines mutableCopy];
-    [ls addObject:line];
-    [self writeAll:ls];
+    [[self cachedLines] addObject:line];
+    [self markDirty];
 }
 
 - (void)push:(NSString *)line max:(NSUInteger)max {
@@ -77,26 +187,35 @@
 }
 
 - (nullable NSString *)top {
-    return self.lines.firstObject;
+    return [self cachedLines].firstObject;
 }
 
 - (void)removeLine:(NSString *)line {
-    NSMutableArray *ls = [self.lines mutableCopy];
-    [ls removeObject:line];
-    [self writeAll:ls];
+    [[self cachedLines] removeObject:line];
+    [self markDirty];
 }
 
 - (nullable NSString *)popLast {
-    NSMutableArray *ls = [self.lines mutableCopy];
+    NSMutableArray *ls = [self cachedLines];
     if (ls.count == 0) { return nil; }
     NSString *last = ls[0];
     [ls removeObjectAtIndex:0];
-    [self writeAll:ls];
+    [self markDirty];
     return last;
 }
 
 - (void)clear {
-    [[NSFileManager defaultManager] removeItemAtPath:self.dir error:nil];
+    _cache = [NSMutableArray array];
+    if (_debounce) {
+        dispatch_source_cancel(_debounce);
+        _debounce = nil;
+    }
+    // Remove the file for real (a debounced empty write would also work, but
+    // clearing is expected to free the file immediately, e.g. :cleardata).
+    dispatch_sync(storageWriteQueue(), ^{
+        [[NSFileManager defaultManager] removeItemAtPath:self.dir error:nil];
+    });
+    _dirty = NO;
 }
 
 @end

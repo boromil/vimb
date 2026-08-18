@@ -81,4 +81,10 @@
     return hasVisibleWindows;
 }
 
+// Stores write debounced (see VimbStorage); make sure pending history/
+// command/search/bookmark changes reach disk before the process goes away.
+- (void)applicationWillTerminate:(NSNotification *)notification {
+    [VimbStorage flushAll];
+}
+
 @end
