@@ -74,7 +74,11 @@ static const CGFloat kHardMaxHeight = 300.0;
         _tableView.allowsEmptySelection = YES;
         _tableView.allowsMultipleSelection = NO;
         _tableView.backgroundColor = [NSColor clearColor];
-        _tableView.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
+        // Draw selection ourselves via the cell layers so the GTK
+        // completion-selected-css colors (#888 bg, #f6f3e8 fg by default) are
+        // honored; NSTableView's Regular style would paint the system accent
+        // color instead (parity: src/setting.c SETTING_COMPLETION_SELECTED_CSS).
+        _tableView.selectionHighlightStyle = NSTableViewSelectionHighlightStyleNone;
 
         _valueColumn = [[NSTableColumn alloc] initWithIdentifier:@"value"];
         _valueColumn.width = frame.size.width - 4;
@@ -157,6 +161,10 @@ static const CGFloat kHardMaxHeight = 300.0;
         if (idx < 0) { [self deselect]; return NO; }
     }
     self.highlightIndex = idx;
+    // Reload so the newly highlighted (and previously highlighted) rows
+    // repaint their cell layers; with selectionHighlightStyle None the table
+    // view itself would never redraw on a programmatic selectRowIndexes:.
+    [_tableView reloadData];
     NSIndexSet *set = [NSIndexSet indexSetWithIndex:(NSUInteger)idx];
     [_tableView selectRowIndexes:set byExtendingSelection:NO];
     [_tableView scrollRowToVisible:(NSInteger)idx];
@@ -166,6 +174,7 @@ static const CGFloat kHardMaxHeight = 300.0;
 - (void)deselect {
     self.highlightIndex = -1;
     [_tableView deselectAll:nil];
+    [_tableView reloadData];
 }
 
 - (NSString *)selectedValue {
@@ -200,8 +209,10 @@ static const CGFloat kHardMaxHeight = 300.0;
     CompletionStyle *hover = [CompletionMatcher styleFromCSS:self.completionHoverCSS ?: @""];
 
     // Defaults (opaque, readable) when unset — parity with the default
-    // #completion row color:#fff on background:#656565.
-    NSColor *bg = [NSColor colorWithCalibratedRed:0.40 green:0.40 blue:0.40 alpha:1.0];
+    // #completion row color:#fff on background:#656565 (config.def.h
+    // SETTING_COMPLETION_CSS) and the selected row color:#f6f3e8 on
+    // background:#888 (SETTING_COMPLETION_SELECTED_CSS).
+    NSColor *bg = [NSColor colorWithCalibratedWhite:0x65 / 255.0 alpha:1.0];
     NSColor *fg = [NSColor whiteColor];
     if (normal.hasBackground) {
         bg = [NSColor colorWithCalibratedRed:normal.bgRed green:normal.bgGreen
@@ -217,11 +228,11 @@ static const CGFloat kHardMaxHeight = 300.0;
     NSColor *selBg = selected.hasBackground
         ? [NSColor colorWithCalibratedRed:selected.bgRed green:selected.bgGreen
                                       blue:selected.bgBlue alpha:selected.bgAlpha]
-        : [NSColor selectedControlColor];
+        : [NSColor colorWithCalibratedWhite:0x88 / 255.0 alpha:1.0];
     NSColor *selFg = selected.hasForeground
         ? [NSColor colorWithCalibratedRed:selected.fgRed green:selected.fgGreen
                                      blue:selected.fgBlue alpha:selected.fgAlpha]
-        : fg;
+        : [NSColor colorWithCalibratedWhite:0xf6 / 255.0 alpha:1.0];
     self.selectedBgColor = selBg;
     self.selectedFgColor = selFg;
     (void)hover;

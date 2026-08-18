@@ -72,6 +72,20 @@
             return;
         }
     }
+    // Arrow Up/Down: command-line history (GTK main.c maps GDK_KEY_Up/Down to
+    // ex_keypress KEY_UP/KEY_DOWN -> history()). The plain field would move a
+    // caret that doesn't exist in vimb's single-line prompt.
+    if (chars.length == 1) {
+        unichar c = [chars characterAtIndex:0];
+        if (c == NSUpArrowFunctionKey) {
+            if (self.vbDelegate) [self.vbDelegate commandField:self requestedHistory:-1];
+            return;
+        }
+        if (c == NSDownArrowFunctionKey) {
+            if (self.vbDelegate) [self.vbDelegate commandField:self requestedHistory:1];
+            return;
+        }
+    }
     [super keyDown:event];
 }
 

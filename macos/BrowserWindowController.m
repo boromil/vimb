@@ -1785,6 +1785,19 @@
             [self completeCommandFieldDirection:-1];
             return YES;
         }
+        // Arrow Up/Down while editing arrive as moveUp:/moveDown: on the
+        // field editor (not keyDown:). GTK main.c maps GDK Up/Down to
+        // ex_keypress KEY_UP/KEY_DOWN -> history(); with an open completion
+        // they step the highlighted candidate instead (requestedHistory:
+        // dispatches on completionDropdown.hasCandidates).
+        if (commandSelector == @selector(moveUp:)) {
+            [self commandField:self.commandField requestedHistory:-1];
+            return YES;
+        }
+        if (commandSelector == @selector(moveDown:)) {
+            [self commandField:self.commandField requestedHistory:1];
+            return YES;
+        }
     }
     return NO;
 }
@@ -1827,6 +1840,14 @@
 }
 
 - (void)commandField:(VimbCommandField *)field requestedHistory:(NSInteger)direction {
+    // While a completion session is active, Up/Down step the highlighted
+    // candidate (parity with the GTK completion list keeping keyboard focus
+    // in the list; main.c routes Up/Down to ex_keypress only when no
+    // completion holds the focus).
+    if (self.completionDropdown.hasCandidates) {
+        [self stepDropdownSelectionBy:direction];
+        return;
+    }
     VimMode m = self.vim.mode;
     if (m != VimModeCommand && m != VimModeSearch) { return; }
     VimbStorage *store = [VimbConfig shared].commandStore;
