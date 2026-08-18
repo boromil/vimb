@@ -243,7 +243,16 @@
     cmdField.delegate = self;
     self.commandField = cmdField;
     self.commandField.font = [NSFont systemFontOfSize:14 weight:NSFontWeightRegular];
-    self.commandField.bezelStyle = NSTextFieldRoundedBezel;
+    // Flat input line (GTK parity: vimb's GtkEntry has no boxed chrome, and
+    // HIG text guidance: fields inside bars shouldn't float as boxed
+    // controls). A rounded-bezel NSTextField on the vibrancy bar rendered
+    // as a hard black slab with a blue focus ring when active and a gray
+    // slab when idle — visually detached from the bar. Borderless keeps
+    // the text sitting directly on the bar material like Safari's bar.
+    self.commandField.bezelStyle = NSTextFieldSquareBezel;
+    self.commandField.bordered = NO;
+    self.commandField.drawsBackground = NO;
+    self.commandField.focusRingType = NSFocusRingTypeNone;
     self.commandField.controlSize = NSControlSizeRegular;
     self.commandField.translatesAutoresizingMaskIntoConstraints = NO;
     [bottomBar addSubview:self.commandField];
