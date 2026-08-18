@@ -80,8 +80,13 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
     [self addSetting:@"user-agent" type:C value:@"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 vimb/3.7.0"];
     [self addSetting:@"allow-file-access-from-file-urls" type:B value:@NO];
     [self addSetting:@"allow-universal-access-from-file-urls" type:B value:@NO];
+    // Inert on macOS (no public WK caret-browsing API); registered so GTK
+    // config files load unchanged. See macos/settings-application.md.
     [self addSetting:@"caret" type:B value:@NO];
-    [self addSetting:@"cursiv-font" type:C value:@"serif"];  // GTK key name (setting.c:98)
+    // GTK key name (setting.c:98) is vimb's historical misspelling of
+    // "cursive"; kept verbatim for config parity. Inert (no WK font-family
+    // override). See macos/settings-application.md.
+    [self addSetting:@"cursiv-font" type:C value:@"serif"];
     [self addSetting:@"dark-mode" type:B value:@NO];
     [self addSetting:@"default-charset" type:C value:@"utf-8"];
     [self addSetting:@"default-font" type:C value:@"sans-serif"];
@@ -145,6 +150,8 @@ static const NSString *HISTIGNORE = @"^(about:)|(file:)"; // vimb config.h SETTI
     [self addSetting:@"incsearch" type:B value:@YES];
     [self addSetting:@"closed-max-items" type:I value:@10];
     [self addSetting:@"x-hint-command" type:C value:@":o <C-R>;"];
+    // Inert: web-content spell checking follows the system config; no public
+    // per-view WK toggle (setting.c:192). See macos/settings-application.md.
     [self addSetting:@"spell-checking" type:B value:@NO];
     [self addSetting:@"spell-checking-languages" type:C value:@"en_US"];
     [self addSetting:@"completion-css" type:C value:@""];

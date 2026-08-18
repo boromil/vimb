@@ -87,8 +87,8 @@ WKWebView ceiling.
   substring matcher + GTK `completion-*` CSS parser) in the test target, and the
   opaque `CompletionDropdown.h/m` view (NSTableView) fed by the matcher; keyboard
   Tab/Shift-Tab/Enter/Esc exposed via moveSelectionBy:/selectedValue/dismiss.
-  Full wiring into BrowserWindowController's command field was deferred — that
-  file is owned by another workstream (see summary).
+  Wiring into BrowserWindowController's command field landed later (dropdown is
+  created in the window controller and layered under the web views).
 
 ### WS-2  Context menu (`context-menu.c` parity) — `[done]`
 - **Goal:** wire `NSMenu` on right-click in `KeyboardWebView` so the vimb
@@ -148,9 +148,10 @@ WKWebView ceiling.
 
 ### WS-6  Non-public settings application — `[n/a]`
 - **Blocked / not portable:** `images`, `media-*`, `webaudio`, `webgl`, font
-  families, `caret`, etc. have no public WK API, or using them re-triggers the
-  KVC-on-`WKPreferences` init hang. Do not claim. Documented in
-  `macos/settings-application.md` (memory tag `settings`).
+  families, `caret`, `spell-checking*`, etc. have no public WK API, or using
+  them re-triggers the KVC-on-`WKPreferences` init hang. Do not claim.
+  Full applied-vs-inert table: `macos/settings-application.md`
+  (registration comments in `macos/VimbConfig.m` cross-reference it).
 
 ### WS-7  Popup / new-window policy (`main.c on_webview_create` parity) — `[done]`
 - **Goal:** handle `window.open` and `target=_blank` popups via the WKUIDelegate
