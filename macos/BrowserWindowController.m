@@ -43,6 +43,7 @@
 @property(nonatomic, strong) NSView *currentWebviewHolder;
 @property(nonatomic, copy, nullable) NSString *commandPrefix;
 @property(nonatomic, assign) BOOL currentHintGmode;   // whether the active hint run is g-mode (keep-open)
+@property(nonatomic, strong) NSLayoutConstraint *tabStripLeading;   // traffic-light inset (0 in fullscreen)
 @end
 
 @implementation BrowserWindowController
@@ -51,11 +52,26 @@
     NSWindow *window = [[VimbWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, 1100, 760)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                             NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
+                             NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
+                             NSWindowStyleMaskFullSizeContentView)
                     backing:NSBackingStoreBuffered
                       defer:NO];
     window.title = @"vimb";
-    window.titlebarAppearsTransparent = NO;
+    // Modern unified chrome (HIG "Window anatomy" / Safari-style): the
+    // titlebar is transparent and extends into the content so the tab strip
+    // sits in the titlebar row; the traffic-light inset is reserved via the
+    // safe-area guide. The title still shows in the Window menu / Mission
+    // Control via the window's title property.
+    window.titlebarAppearsTransparent = YES;
+    // FullSizeContentView keeps drawing the title TEXT centered in the now
+    // transparent titlebar — it lands on top of the tab strip (two texts
+    // interleaved). Hide it; window.title still names the window in the
+    // Window menu / Mission Control.
+    window.titleVisibility = NSWindowTitleHidden;
+    window.movableByWindowBackground = YES;
+    // vimb draws its own tab strip inside the titlebar row (Safari-style):
+    // the strip is pinned to the content top and indented past the traffic
+    // lights, so a separate toolbar/title-height hack is unnecessary.
     window.tabbingMode = NSWindowTabbingModeDisallowed;
     window.minSize = NSMakeSize(640, 400);
     // vimb manages its own session state (like GTK vimb): opt out of macOS
@@ -118,11 +134,17 @@
     NSView *root = [[NSView alloc] init];
     root.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:root];
+    // The tab strip lives INSIDE the (transparent) titlebar row. Pin root to
+    // the content view's true edges, then indent the tab strip past the
+    // traffic lights via the safe area. Everything else hangs off root.
+    // (The safe-area top alone used to leave a full system-height titlebar
+    // block above the strip, splitting the window into a dark title zone and
+    // a light content zone — "the gui is fucked".)
     [NSLayoutConstraint activateConstraints:@[
-        [root.leadingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.leadingAnchor],
-        [root.trailingAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.trailingAnchor],
-        [root.topAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.topAnchor],
-        [root.bottomAnchor constraintEqualToAnchor:content.safeAreaLayoutGuide.bottomAnchor],
+        [root.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [root.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+        [root.topAnchor constraintEqualToAnchor:content.topAnchor],
+        [root.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
     ]];
 
     // Row 1 — tab strip. An NSStackView as the vertical root is a trap: its
@@ -166,10 +188,15 @@
     ]];
     [root addSubview:tabHost];
     [NSLayoutConstraint activateConstraints:@[
-        [tabHost.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        // Indent past the traffic lights: with FullSizeContentView the
+        // safe-area guide resolves to x=0, so reserve the standard titlebar
+        // leading inset (78pt = traffic lights + AppKit spacing) explicitly.
+        // Fullscreen removes the lights, so the strip goes full-width there.
         [tabHost.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
         [tabHost.topAnchor constraintEqualToAnchor:root.topAnchor],
     ]];
+    self.tabStripLeading = [tabHost.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:78];
+    self.tabStripLeading.active = YES;
 
     // Row 2 — web container: the stretchy middle that fills everything
     // between the tab strip and the docked bottom bar.
@@ -181,11 +208,24 @@
     // one box, web view ending at its top edge — the page never renders
     // underneath the chrome). input-autohide collapses the input row while
     // idle, exactly like vimb hides its input box when unfocused.
-    NSView *bottomBar = [[NSView alloc] init];
+    // Material: the bar uses the window-background material (HIG "Layout
+    // and materials": bars get materials, not opaque fills) so it adapts to
+    // light/dark automatically; a hairline separator marks its top edge.
+    NSVisualEffectView *bottomBar = [[NSVisualEffectView alloc] init];
     bottomBar.translatesAutoresizingMaskIntoConstraints = NO;
-    bottomBar.wantsLayer = YES;
-    bottomBar.layer.backgroundColor = [NSColor controlBackgroundColor].CGColor;
+    bottomBar.material = NSVisualEffectMaterialContentBackground;
+    bottomBar.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    bottomBar.state = NSVisualEffectStateActive;
+    [bottomBar addSubview:[self hairlineSeparator]];
     self.bottomBar = bottomBar;
+    {
+        NSBox *sep = bottomBar.subviews.lastObject;
+        [NSLayoutConstraint activateConstraints:@[
+            [sep.leadingAnchor constraintEqualToAnchor:bottomBar.leadingAnchor],
+            [sep.trailingAnchor constraintEqualToAnchor:bottomBar.trailingAnchor],
+            [sep.topAnchor constraintEqualToAnchor:bottomBar.topAnchor],
+        ]];
+    }
     [root addSubview:bottomBar];
     [NSLayoutConstraint activateConstraints:@[
         [bottomBar.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
@@ -378,12 +418,13 @@
         NSString *title = [t.title length] ? t.title : @"New Tab";
         NSButton *b = [NSButton buttonWithTitle:title target:self action:@selector(tabButtonClicked:)];
         b.tag = (NSInteger)i;
-        // NSBezelStyleRounded honors bezelColor (TexturedRounded/Inline did
-        // not), giving the active tab a native accent-tinted rounded pill and
-        // inactive tabs a subtle neutral pill — deterministic, no layer hacks.
+        // Modern capsule tabs (HIG "Tabs" / Safari style): Rounded bezel
+        // honors bezelColor, so the active tab is the accent-tinted capsule
+        // and inactive tabs are quiet neutral capsules. Hover adds the
+        // system hover effect via the cell; no layer hacks.
         b.bezelStyle = NSBezelStyleRounded;
-        b.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-        b.controlSize = NSControlSizeRegular;
+        b.font = [NSFont systemFontOfSize:12 weight:(i == activeIdx ? NSFontWeightSemibold : NSFontWeightRegular)];
+        b.controlSize = NSControlSizeSmall;
         b.imagePosition = NSNoImage;
         b.lineBreakMode = NSLineBreakByTruncatingTail;
         // Let the cell shrink below the full title (truncating with …) so
@@ -406,7 +447,7 @@
             b.bezelColor = [NSColor controlAccentColor];
             b.contentTintColor = [NSColor whiteColor];
         } else {
-            b.bezelColor = [NSColor colorWithWhite:0.5 alpha:0.25];
+            b.bezelColor = [NSColor quaternaryLabelColor];
             b.contentTintColor = [NSColor labelColor];
         }
         [self.tabBar addArrangedSubview:b];
@@ -591,13 +632,26 @@
     }
     // dark-mode: force the window (and so WKWebView content) into dark
     // appearance; prefers-color-scheme on pages follows the app appearance.
-    NSAppearance *dark = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-    NSAppearance *normal = nil;
+    // Off = follow the system (nil), NOT force-light: HIG apps track the
+    // system appearance by default. GTK parity keeps dark-mode as an
+    // opt-in override (setting.c dark_mode).
     if ([cfg getBool:@"dark-mode" defaultValue:NO]) {
-        self.window.appearance = dark;
-    } else if (self.window.appearance == dark) {
-        self.window.appearance = normal;
+        self.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    } else {
+        self.window.appearance = nil;
     }
+}
+
+// Fullscreen removes the traffic lights, so the tab strip can span the full
+// window width; the 78pt titlebar inset returns when the chrome reappears.
+- (void)windowDidEnterFullScreen:(NSNotification *)note {
+    (void)note;
+    self.tabStripLeading.constant = 0;
+}
+
+- (void)windowDidExitFullScreen:(NSNotification *)note {
+    (void)note;
+    self.tabStripLeading.constant = 78;
 }
 
 - (NSArray<NSArray<NSString *> *> *)split:(NSString *)s on:(NSString *)sep {
@@ -1129,6 +1183,16 @@
 }
 
 #pragma mark - Helpers
+
+// 1px hairline pinned to a bar's top edge; NSBox uses the system separator
+// color so it adapts to light/dark (HIG separators are hairline, not 2pt).
+// Call after the box has a superview: [bar addSubview:[self hairline]].
+- (NSBox *)hairlineSeparator {
+    NSBox *sep = [[NSBox alloc] init];
+    sep.boxType = NSBoxSeparator;
+    sep.translatesAutoresizingMaskIntoConstraints = NO;
+    return sep;
+}
 
 - (VimbTab *)tabForWebView:(KeyboardWebView *)view {
     for (VimbTab *t in self.tabs) {
