@@ -19,6 +19,7 @@ LDFLAGS  := $(FRAMEWORKS)
 
 SRCS := main.m \
         VimbAppDelegate.m \
+        VimbScripts.m \
         BrowserWindowController.m \
         KeyboardWebView.m \
         TabView.m \
@@ -52,6 +53,13 @@ STREAM_TEST_SRCS  :=
 SRCS              += $(STREAM_SRCS)
 
 OBJS := $(SRCS:.m=.o)
+
+# Embedded page scripts: regenerate when scripts/*.js change (parity with
+# src/Makefile's js2h.sh rule). Generated files are committed; this rule
+# keeps them current during development.
+VimbScripts.h VimbScripts.m: scripts/mkjsheader.sh $(wildcard scripts/*.js)
+	@echo "  JS    scripts/*.js -> VimbScripts.{h,m}"
+	@./scripts/mkjsheader.sh
 
 all: $(APP)
 
