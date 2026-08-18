@@ -84,12 +84,21 @@ else
 	$(Q)open $(MACOSDIR)/$(APP)
 endif
 
-test: version.h
+test:
+ifneq "$(NATIVE)" "1"
 	$(MAKE) -C src vimb.so
 	$(MAKE) -C tests
+else
+	@# Darwin: run the native macOS unit suite (make -C macos test).
+	$(Q)$(MAKE) -C $(MACOSDIR) test
+endif
 
 test-clean:
+ifneq "$(NATIVE)" "1"
 	$(MAKE) -C tests clean
+else
+	$(Q)$(MAKE) -C $(MACOSDIR) test-clean
+endif
 
 %.subdir-all:
 	$(Q)$(MAKE) -C $*
