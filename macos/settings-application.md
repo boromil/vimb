@@ -30,8 +30,8 @@ Handled through `VimbConfig -applySetting:value:` and the BrowserWindowControlle
 fonts and colors.
 
 `completion-hover-css` is an exception: the dropdown is a custom row view with
-no hover state, so the value is parsed and stored but never rendered (selected
-row styling covers the keyboard/mouse selection path).
+no hover state, so the value is stored but never rendered (selected row
+styling covers the keyboard/mouse selection path).
 
 ## Registered but inert (accepted for config compatibility, no WK effect)
 
