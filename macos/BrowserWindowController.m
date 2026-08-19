@@ -2130,7 +2130,6 @@ static BOOL vbHasPrefix(NSString *s, NSString *prefix) {
         [candidates addObject:[CompletionCandidate candidateWithValue:s detail:nil]];
     }
     [self.completionDropdown updateWithCandidates:candidates];
-    NSLog(@"[ddbg] candidates=%lu strings=%@", (unsigned long)strings.count, strings);
     // Anchor at the bottom edge of the web container (= top of the docked
     // input row): the dropdown grows upward from there, over the page, like
     // the GTK completion box stacked above the input line. Width matches the

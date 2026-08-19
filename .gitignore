@@ -15,3 +15,7 @@ macos/*.o
 # clang coverage artifacts (may land in repo root when test runs from here)
 default.profraw
 coverage.profdata
+
+# local tool noise (not covered for collaborators/agents without a global ignore)
+.DS_Store
+.maki/
