@@ -32,10 +32,32 @@
 @property (nonatomic, strong) NSColor *selectedFgColor;
 @end
 
+// Row background painter: layer fills on cells never composited, so rows draw
+// themselves (drawRect), honoring completion-css / completion-selected-css.
+@interface CompletionRowView : NSTableRowView
+@property (nonatomic, weak) CompletionDropdown *dropdown;
+@end
+
+@implementation CompletionRowView
+- (void)drawRect:(NSRect)dirtyRect {
+    BOOL selected = self.isSelected;
+    NSColor *fill = selected ? self.dropdown.selectedBgColor : self.dropdown.bgColor;
+    [fill setFill];
+    NSRectFill(self.bounds);
+}
+@end
+
+
 @implementation CompletionDropdown
 
 static const CGFloat kRowHeight = 22.0;
 static const CGFloat kCornerRadius = 8.0;
+// The popover floats fully ABOVE the input row with a small gap: its bottom
+// edge never touches (let alone overlaps) the command line. GTK stacks the
+// completion flush above the input; the native popover chrome (rounded
+// corners + shadow) needs breathing room to read as a separate floating
+// panel instead of a box glued onto the input bar.
+static const CGFloat kAnchorGap = 4.0;
 // GTK parity caps the completion at 1/3 of the window height (see
 // completion_create: "use max 1/3 of window height for the completion"); this
 // is an absolute ceiling on top of that.
@@ -113,20 +135,21 @@ static const CGFloat kHardMaxHeight = 300.0;
 - (void)presentRelativeToRect:(NSRect)rect inView:(NSView *)view {
     NSUInteger count = self.candidates.count;
     if (count == 0) { [self dismiss]; return; }
-    // The anchor's origin.y marks the line the dropdown's BOTTOM edge sits on
-    // (the top of the command input row); the list grows upward from it, over
-    // the page — like vimb GTK, where the completion box stacks above the
-    // input line. Clamp width/height inside the container so rows can never
-    // be clipped by the window boundary or overlap the input row. Height is
-    // capped at 1/3 of the container (GTK parity) plus an absolute ceiling.
+    // The anchor's origin.y marks the top of the command input row: the list
+    // floats fully above it with a small gap (kAnchorGap), growing upward
+    // over the page — like vimb GTK, where the completion box stacks above
+    // the input line, never covering it. Clamp width/height inside the
+    // container so rows can never be clipped by the window boundary or
+    // reach into the input row. Height is capped at 1/3 of the container
+    // (GTK parity) plus an absolute ceiling.
     CGFloat x = MAX(0, rect.origin.x);
     CGFloat w = MIN(rect.size.width, view.bounds.size.width - 2 * x);
     // The list grows up from the anchor, so it must also fit between the
-    // anchor and the top of the container.
-    CGFloat avail = view.bounds.size.height - rect.origin.y;
+    // anchor (plus the floating gap) and the top of the container.
+    CGFloat avail = view.bounds.size.height - rect.origin.y - kAnchorGap;
     CGFloat h = MIN(MIN(MIN((CGFloat)count * kRowHeight, view.bounds.size.height / 3.0), kHardMaxHeight), avail);
     if (w < kRowHeight || h <= 0) { [self dismiss]; return; }
-    self.frame = NSMakeRect(x, rect.origin.y, w, h);
+    self.frame = NSMakeRect(x, rect.origin.y + kAnchorGap, w, h);
     self.hidden = NO;
 }
 
@@ -240,7 +263,22 @@ static const CGFloat kHardMaxHeight = 300.0;
     if (self.layer) {
         self.layer.backgroundColor = bg.CGColor;
     }
+    [self setNeedsDisplay:YES];
     [_tableView reloadData];
+}
+
+// Paint the opaque plate in drawRect. Layer backgrounds proved unreliable
+// here (the panel rendered as ghost text with the page showing through): the
+// view sits inside a layer-backed scroll-view sandwich whose compositing
+// dropped the panel and cell layer fills. drawRect is the dependable path;
+// the layer keeps only border + shadow. GTK parity: the default plate is the
+// #656565 #completion background (config.def.h SETTING_COMPLETION_CSS).
+- (void)drawRect:(NSRect)dirtyRect {
+    NSBezierPath *plate = [NSBezierPath bezierPathWithRoundedRect:self.bounds
+                                                          xRadius:kCornerRadius
+                                                          yRadius:kCornerRadius];
+    [self.bgColor setFill];
+    [plate fill];
 }
 
 #pragma mark - NSTableViewDataSource / Delegate
@@ -308,9 +346,8 @@ static const CGFloat kHardMaxHeight = 300.0;
     CompletionCandidate *c = self.candidates[row];
     valueLabel.stringValue = c.value;
     BOOL selected = (row == self.highlightIndex);
-    // Full-row highlight (HIG lists: highlight the entire row).
-    cell.wantsLayer = YES;
-    cell.layer.backgroundColor = (selected ? self.selectedBgColor : self.bgColor).CGColor;
+    // Row backgrounds are drawn by CompletionRowView (see
+    // tableView:rowViewForRow:); cell layer fills proved unreliable.
     valueLabel.textColor = selected ? (self.selectedFgColor ?: self.fgColor) : self.fgColor;
     if (c.detail.length > 0) {
         detailLabel.hidden = NO;
@@ -325,6 +362,19 @@ static const CGFloat kHardMaxHeight = 300.0;
 
 - (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)row {
     return YES;
+}
+
+// Full-row backgrounds (normal + selected) via a custom row view: layer
+// fills on the cells never composited, so the rows draw themselves the way
+// GTK's #completion > row{background-color:...} / :selected{...} CSS does.
+- (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
+    CompletionRowView *rowView = [tableView makeViewWithIdentifier:@"vimbrow" owner:self];
+    if (!rowView) {
+        rowView = [[CompletionRowView alloc] initWithFrame:NSMakeRect(0, 0, tableView.bounds.size.width, kRowHeight)];
+        rowView.identifier = @"vimbrow";
+    }
+    rowView.dropdown = self;
+    return rowView;
 }
 
 // GTK parity (completion.c on_selection_changed): every selection change —
