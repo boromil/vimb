@@ -107,6 +107,11 @@ The default opened page is the selected search engine's main page (see
 `home-page`); a non-URL entered at `:open <...>` is searched via that engine
 (`:shortcut-add`, `:shortcut-default` customize it, e.g. `dd` DuckDuckGo).
 
+The window follows macOS conventions: tabs sit in the titlebar row
+(Safari-style), the page fills the window, and the command line is a flat
+input docked at the bottom edge. Completions appear in a dropdown floating
+above the command line, driven with `Tab`/`S-Tab` or the arrow keys.
+
 The native backend lives in `macos/` and is a faithful Objective-C + WKWebView
 port of the vim-mode engine (normal mode, a full ex-command set, settings,
 registers, local + global marks, history, bookmarks, hint modes, autocmds,

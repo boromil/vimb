@@ -89,6 +89,10 @@ WKWebView ceiling.
   Tab/Shift-Tab/Enter/Esc exposed via moveSelectionBy:/selectedValue/dismiss.
   Wiring into BrowserWindowController's command field landed later (dropdown is
   created in the window controller and layered under the web views).
+  Later rewritten as a manual row layout (no NSScrollView/NSTableView): AppKit's
+  table view offsets row 0 by ~10pt and its selection styling cannot honor the
+  CSS colors; rows are now plain `CompletionRowView`s at fixed slots in a
+  flipped container.
 
 ### WS-2  Context menu (`context-menu.c` parity) — `[done]`
 - **Goal:** wire `NSMenu` on right-click in `KeyboardWebView` so the vimb

@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+* Native macOS port: on darwin `make` builds `vimb.app` from the
+  Objective-C + AppKit + WKWebView backend in `macos/` (vim-mode engine,
+  ex commands, settings, registers, marks, history, bookmarks, hints,
+  autocmds, keymaps; config and data live under
+  `~/Library/Application Support/vimb`). `make test` runs the native
+  Foundation-only unit suite on darwin.
+### Changed
+* macOS: the tab strip is drawn in the titlebar row (Safari-style); the
+  command line is a flat input directly on the bottom bar
+* macOS: the completion dropdown is a custom view that floats above the
+  command line and follows the `completion-css` /
+  `completion-selected-css` colors; `Tab`/`S-Tab` step through it,
+  `Up`/`Down` work while it is open, and clicking a row picks it
+### Fixed
+* macOS: completion dropdown no longer rendered rows with transparent
+  gaps, clipped text or a 10pt offset, and no longer corrupts the
+  command line after a completion (the field editor text is now kept in
+  sync with programmatic writes)
 
 ## [4.0.0]
 ### Added

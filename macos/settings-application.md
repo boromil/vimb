@@ -26,7 +26,12 @@ Applied in `KeyboardWebView -initWithFrame:` on the `WKWebViewConfiguration`
 
 Handled through `VimbConfig -applySetting:value:` and the BrowserWindowController
 `:set` dispatch: anything with a native AppKit/WK surface, e.g. `dark-mode`,
-`gui-*` styling, `completion-*` CSS, `statusbar-*`, fonts and colors.
+`gui-*` styling, `completion-css` / `completion-selected-css`, `statusbar-*`,
+fonts and colors.
+
+`completion-hover-css` is an exception: the dropdown is a custom row view with
+no hover state, so the value is parsed and stored but never rendered (selected
+row styling covers the keyboard/mouse selection path).
 
 ## Registered but inert (accepted for config compatibility, no WK effect)
 
