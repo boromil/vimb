@@ -1,18 +1,19 @@
 // AppKit completion dropdown for vimb (parity with the GTK4 completion widget
-// in src/completion.c). A native popover-style list rendered above the command
-// field as the user types.
+// in src/completion.c). A native, opaque popover-style list floating above the
+// command field as the user types.
 //
-// Visuals follow the platform conventions used by native command palettes
-// (Spotlight/Raycast-style): rounded corners, hairline border, soft drop
-// shadow, full-row selection highlight (HIG "Focus and selection": lists use a
-// row highlight, not a focus ring) and two-column rows — the candidate value
-// plus a right-aligned dimmed detail column, mirroring GTK's CompletionItem
-// first/second pair. Colors remain driven by the completion-css /
-// completion-selected-css settings (GTK parity), defaulting to the classic
-// #656565 box with white text.
+// Rows are laid out manually (no NSScrollView/NSTableView): the table-based
+// version fought AppKit's document layout — the scroll view silently resized
+// the document and offset row 0 by ~10pt, so rows rendered half-clipped no
+// matter how the clip view was reset. Manual layout pins each row to an exact
+// 22pt slot with an opaque plate behind them; the list shows the first
+// floor(height/kRowHeight) candidates (GTK caps the box at 1/3 of the window
+// height the same way).
 //
-// The candidate *generation / ranking / filtering* logic lives in the
-// Foundation-only CompletionMatcher (CompletionCandidate.h) so that it is
+// Colors stay driven by the completion-css / completion-selected-css settings
+// (GTK parity: defaults are the #656565 plate with #888 selected rows from
+// config.def.h). The candidate *generation / ranking / filtering* logic lives
+// in the Foundation-only CompletionMatcher (CompletionCandidate.h) so it stays
 // unit-testable; this view is AppKit-coupled and only ships with the app.
 //
 // Keyboard operation is exposed explicitly so the owning controller can route
@@ -20,9 +21,101 @@
 // current row is read via `selectedValue`, and dismiss ends the session.
 #import "CompletionDropdown.h"
 #import "CompletionCandidate.h"
+#import <QuartzCore/QuartzCore.h>
+
+// A single completion row: full-row background (normal or selected) with the
+// candidate value on the left and an optional dimmed detail on the right
+// (GTK CompletionItem first/second pair). Draws itself so the completion-css
+// colors are honored exactly (NSTableView selection styling is not).
+@interface CompletionRowView : NSView
+@property (nonatomic, copy) NSString *value;
+@property (nonatomic, copy) NSString *detail;
+@property (nonatomic, assign) BOOL highlighted;
+@property (nonatomic, strong) NSColor *normalBg;
+@property (nonatomic, strong) NSColor *selectedBg;
+@property (nonatomic, strong) NSColor *normalFg;
+@property (nonatomic, strong) NSColor *selectedFg;
+@end
+
+@implementation CompletionRowView {
+    NSTextField *_valueLabel;
+    NSTextField *_detailLabel;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        _valueLabel = [[NSTextField alloc] init];
+        _valueLabel.editable = NO;
+        _valueLabel.selectable = NO;
+        _valueLabel.bezeled = NO;
+        _valueLabel.drawsBackground = NO;
+        _valueLabel.font = [NSFont systemFontOfSize:12.0];
+        _valueLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        _valueLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview:_valueLabel];
+
+        _detailLabel = [[NSTextField alloc] init];
+        _detailLabel.editable = NO;
+        _detailLabel.selectable = NO;
+        _detailLabel.bezeled = NO;
+        _detailLabel.drawsBackground = NO;
+        _detailLabel.font = [NSFont systemFontOfSize:11.0];
+        _detailLabel.alignment = NSTextAlignmentRight;
+        _detailLabel.lineBreakMode = NSLineBreakByTruncatingHead;
+        _detailLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview:_detailLabel];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [_valueLabel.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:10],
+            [_valueLabel.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+            [_detailLabel.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-10],
+            [_detailLabel.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+            [_detailLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:_valueLabel.trailingAnchor constant:8],
+        ]];
+    }
+    return self;
+}
+
+- (void)setValue:(NSString *)value { _value = [value copy]; _valueLabel.stringValue = value ?: @""; }
+- (void)setDetail:(NSString *)detail {
+    _detail = [detail copy];
+    _detailLabel.stringValue = detail ?: @"";
+    _detailLabel.hidden = (detail.length == 0);
+}
+
+- (void)setHighlighted:(BOOL)highlighted {
+    _highlighted = highlighted;
+    _valueLabel.textColor = highlighted ? (_selectedFg ?: _normalFg) : _normalFg;
+    _detailLabel.textColor = [((highlighted ? (_selectedFg ?: _normalFg) : _normalFg)) colorWithAlphaComponent:0.65];
+    [self setNeedsDisplay:YES];
+}
+
+// Opaque full-row background; drawRect is reliable here (plain subviews, no
+// layer-backed scroll sandwich fighting the fill).
+- (void)drawRect:(NSRect)dirtyRect {
+    NSColor *fill = self.highlighted ? self.selectedBg : self.normalBg;
+    [fill setFill];
+    NSRectFill(self.bounds);
+}
+
+- (BOOL)isFlipped { return YES; }
+
+@end
+
+// Flipped container so row i sits at y = i * kRowHeight from the TOP (plain
+// NSView is bottom-left origin; without flipping the candidate order rendered
+// upside-down and the highlight painted the wrong row).
+@interface CompletionRowsContainer : NSView
+@end
+
+@implementation CompletionRowsContainer
+- (BOOL)isFlipped { return YES; }
+@end
 
 @interface CompletionDropdown () {
-    NSTableColumn *_valueColumn;
+    CALayer *_plateLayer;
+    NSView *_rowsContainer;   // flipped; holds CompletionRowView slots
 }
 @property (nonatomic, copy) NSArray<CompletionCandidate *> *candidates;
 @property (nonatomic) NSInteger highlightIndex;
@@ -31,22 +124,6 @@
 @property (nonatomic, strong) NSColor *selectedBgColor;
 @property (nonatomic, strong) NSColor *selectedFgColor;
 @end
-
-// Row background painter: layer fills on cells never composited, so rows draw
-// themselves (drawRect), honoring completion-css / completion-selected-css.
-@interface CompletionRowView : NSTableRowView
-@property (nonatomic, weak) CompletionDropdown *dropdown;
-@end
-
-@implementation CompletionRowView
-- (void)drawRect:(NSRect)dirtyRect {
-    BOOL selected = self.isSelected;
-    NSColor *fill = selected ? self.dropdown.selectedBgColor : self.dropdown.bgColor;
-    [fill setFill];
-    NSRectFill(self.bounds);
-}
-@end
-
 
 @implementation CompletionDropdown
 
@@ -68,8 +145,8 @@ static const CGFloat kHardMaxHeight = 300.0;
     if (self) {
         self.wantsLayer = YES;
         // Popover-style chrome: rounded plate, hairline border, soft shadow.
-        // The layer must NOT clip its children (masksToBounds would kill the
-        // shadow) so the enclosed scroll view rounds + clips itself instead.
+        // The plate itself is a sublayer at the bottom of the layer stack so
+        // it composites below every row; the view layer keeps border+shadow.
         self.layer.cornerRadius = kCornerRadius;
         self.layer.borderWidth = 1.0;
         self.layer.borderColor = [NSColor separatorColor].CGColor;
@@ -77,38 +154,21 @@ static const CGFloat kHardMaxHeight = 300.0;
         self.layer.shadowOpacity = 1.0;
         self.layer.shadowRadius = 6.0;
         self.layer.shadowOffset = CGSizeMake(0.0, -2.0);
+        _plateLayer = [CALayer layer];
+        _plateLayer.cornerRadius = kCornerRadius;
+        _plateLayer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
+        _plateLayer.frame = CGRectMake(0, 0, frame.size.width, frame.size.height);
+        [self.layer addSublayer:_plateLayer];
+
+        // Flipped container: row i occupies y = i * kRowHeight exactly from
+        // the top. No scroll view means no document insets or clip offsets to
+        // fight.
+        _rowsContainer = [[CompletionRowsContainer alloc] initWithFrame:self.bounds];
+        _rowsContainer.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        [self addSubview:_rowsContainer];
+
         self.candidates = @[];
         self.highlightIndex = -1;
-
-        NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
-        scroll.hasVerticalScroller = YES;
-        scroll.drawsBackground = NO;
-        scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-        scroll.wantsLayer = YES;
-        scroll.layer.cornerRadius = kCornerRadius;
-        scroll.layer.masksToBounds = YES;
-
-        _tableView = [[NSTableView alloc] initWithFrame:scroll.bounds];
-        _tableView.headerView = nil;
-        _tableView.rowHeight = kRowHeight;
-        _tableView.dataSource = self;
-        _tableView.delegate = self;
-        _tableView.allowsEmptySelection = YES;
-        _tableView.allowsMultipleSelection = NO;
-        _tableView.backgroundColor = [NSColor clearColor];
-        // Draw selection ourselves via the cell layers so the GTK
-        // completion-selected-css colors (#888 bg, #f6f3e8 fg by default) are
-        // honored; NSTableView's Regular style would paint the system accent
-        // color instead (parity: src/setting.c SETTING_COMPLETION_SELECTED_CSS).
-        _tableView.selectionHighlightStyle = NSTableViewSelectionHighlightStyleNone;
-
-        _valueColumn = [[NSTableColumn alloc] initWithIdentifier:@"value"];
-        _valueColumn.width = frame.size.width - 4;
-        _valueColumn.resizingMask = NSTableColumnAutoresizingMask;
-        [_tableView addTableColumn:_valueColumn];
-
-        scroll.documentView = _tableView;
-        [self addSubview:scroll];
         [self applyStyles];
     }
     return self;
@@ -118,18 +178,34 @@ static const CGFloat kHardMaxHeight = 300.0;
     return [super initWithCoder:coder];
 }
 
+- (BOOL)isFlipped { return YES; }
+
 - (void)updateWithCandidates:(NSArray<CompletionCandidate *> *)candidates {
     self.candidates = candidates ?: @[];
     self.highlightIndex = -1;
-    [_tableView reloadData];
+    [self rebuildRows];
+}
 
+// (Re)build the row views for the current candidates. The panel height is
+// finalized by presentRelativeToRect:inView:; rows simply fill the container
+// top-down and any candidate beyond the visible slots is dropped (the panel
+// is already capped at 1/3 window height + 300pt, GTK-style).
+- (void)rebuildRows {
+    [_rowsContainer.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
+    CGFloat w = _rowsContainer.bounds.size.width;
     NSUInteger count = self.candidates.count;
-    _tableView.enclosingScrollView.hidden = (count == 0);
-    if (count == 0) { return; }
-    CGFloat h = MIN((CGFloat)count * kRowHeight, kHardMaxHeight);
-    NSRect f = self.frame;
-    f.size.height = h;
-    self.frame = f;
+    for (NSUInteger i = 0; i < count; i++) {
+        CompletionRowView *row = [[CompletionRowView alloc] initWithFrame:NSMakeRect(0, (CGFloat)i * kRowHeight, w, kRowHeight)];
+        row.autoresizingMask = NSViewWidthSizable;
+        row.value = self.candidates[i].value;
+        row.detail = self.candidates[i].detail;
+        row.normalBg = self.bgColor;
+        row.selectedBg = self.selectedBgColor;
+        row.normalFg = self.fgColor;
+        row.selectedFg = self.selectedFgColor;
+        [row setHighlighted:NO];
+        [_rowsContainer addSubview:row];
+    }
 }
 
 - (void)presentRelativeToRect:(NSRect)rect inView:(NSView *)view {
@@ -142,6 +218,11 @@ static const CGFloat kHardMaxHeight = 300.0;
     // container so rows can never be clipped by the window boundary or
     // reach into the input row. Height is capped at 1/3 of the container
     // (GTK parity) plus an absolute ceiling.
+    // Settle Auto Layout first: the input row expanding (inputRowHeight 0->26)
+    // when the command field opens changes the container's height, and
+    // measuring stale bounds here once squeezed the list into a fraction of
+    // a row (clipped slivers of text over the page).
+    [view layoutSubtreeIfNeeded];
     CGFloat x = MAX(0, rect.origin.x);
     CGFloat w = MIN(rect.size.width, view.bounds.size.width - 2 * x);
     // The list grows up from the anchor, so it must also fit between the
@@ -150,6 +231,16 @@ static const CGFloat kHardMaxHeight = 300.0;
     CGFloat h = MIN(MIN(MIN((CGFloat)count * kRowHeight, view.bounds.size.height / 3.0), kHardMaxHeight), avail);
     if (w < kRowHeight || h <= 0) { [self dismiss]; return; }
     self.frame = NSMakeRect(x, rect.origin.y + kAnchorGap, w, h);
+    _rowsContainer.frame = self.bounds;
+    // Only as many rows as fit the capped height.
+    NSUInteger visible = MIN(count, (NSUInteger)floor(h / kRowHeight));
+    if (visible < count) {
+        NSArray<CompletionCandidate *> *trimmed = [self.candidates subarrayWithRange:NSMakeRange(0, visible)];
+        self.candidates = trimmed;
+        [self rebuildRows];
+    } else {
+        [self rebuildRows];
+    }
     self.hidden = NO;
 }
 
@@ -160,8 +251,7 @@ static const CGFloat kHardMaxHeight = 300.0;
     // "completion session active" (GTK FLAG_COMPLETION) rather than "rows were
     // shown at some point".
     self.candidates = @[];
-    [_tableView deselectAll:nil];
-    [_tableView reloadData];
+    [_rowsContainer.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
 }
 
 - (BOOL)hasCandidates {
@@ -184,20 +274,21 @@ static const CGFloat kHardMaxHeight = 300.0;
         if (idx < 0) { [self deselect]; return NO; }
     }
     self.highlightIndex = idx;
-    // Reload so the newly highlighted (and previously highlighted) rows
-    // repaint their cell layers; with selectionHighlightStyle None the table
-    // view itself would never redraw on a programmatic selectRowIndexes:.
-    [_tableView reloadData];
-    NSIndexSet *set = [NSIndexSet indexSetWithIndex:(NSUInteger)idx];
-    [_tableView selectRowIndexes:set byExtendingSelection:NO];
-    [_tableView scrollRowToVisible:(NSInteger)idx];
+    [self repaintHighlight];
     return YES;
 }
 
 - (void)deselect {
     self.highlightIndex = -1;
-    [_tableView deselectAll:nil];
-    [_tableView reloadData];
+    [self repaintHighlight];
+}
+
+- (void)repaintHighlight {
+    NSArray<NSView *> *rows = _rowsContainer.subviews;
+    for (NSUInteger i = 0; i < rows.count; i++) {
+        CompletionRowView *row = (CompletionRowView *)rows[i];
+        [row setHighlighted:((NSInteger)i == self.highlightIndex)];
+    }
 }
 
 - (NSString *)selectedValue {
@@ -229,7 +320,6 @@ static const CGFloat kHardMaxHeight = 300.0;
 - (void)applyStyles {
     CompletionStyle *normal = [CompletionMatcher styleFromCSS:self.completionCSS ?: @""];
     CompletionStyle *selected = [CompletionMatcher styleFromCSS:self.completionSelectedCSS ?: @""];
-    CompletionStyle *hover = [CompletionMatcher styleFromCSS:self.completionHoverCSS ?: @""];
 
     // Defaults (opaque, readable) when unset — parity with the default
     // #completion row color:#fff on background:#656565 (config.def.h
@@ -258,134 +348,30 @@ static const CGFloat kHardMaxHeight = 300.0;
         : [NSColor colorWithCalibratedWhite:0xf6 / 255.0 alpha:1.0];
     self.selectedBgColor = selBg;
     self.selectedFgColor = selFg;
-    (void)hover;
 
-    if (self.layer) {
-        self.layer.backgroundColor = bg.CGColor;
+    if (_plateLayer) {
+        _plateLayer.backgroundColor = bg.CGColor;
     }
-    [self setNeedsDisplay:YES];
-    [_tableView reloadData];
+    [self rebuildRows];
 }
 
-// Paint the opaque plate in drawRect. Layer backgrounds proved unreliable
-// here (the panel rendered as ghost text with the page showing through): the
-// view sits inside a layer-backed scroll-view sandwich whose compositing
-// dropped the panel and cell layer fills. drawRect is the dependable path;
-// the layer keeps only border + shadow. GTK parity: the default plate is the
-// #656565 #completion background (config.def.h SETTING_COMPLETION_CSS).
-- (void)drawRect:(NSRect)dirtyRect {
-    NSBezierPath *plate = [NSBezierPath bezierPathWithRoundedRect:self.bounds
-                                                          xRadius:kCornerRadius
-                                                          yRadius:kCornerRadius];
-    [self.bgColor setFill];
-    [plate fill];
+#pragma mark - Mouse
+
+- (NSView *)hitTest:(NSPoint)point {
+    NSView *hit = [super hitTest:point];
+    return hit;
 }
 
-#pragma mark - NSTableViewDataSource / Delegate
-
-- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
-    return (NSInteger)self.candidates.count;
-}
-
-- (id _Nullable)tableView:(NSTableView *)tableView
-    objectValueForTableColumn:(NSTableColumn *)tableColumn
-                          row:(NSInteger)row {
-    if (row < 0 || row >= (NSInteger)self.candidates.count) { return nil; }
-    return self.candidates[row].value;
-}
-
-// Two-column row (GTK CompletionItem first/second): the candidate value on
-// the left, an optional right-aligned dimmed detail on the right.
-- (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)tableColumn
-                  row:(NSInteger)row {
-    NSTableCellView *cell = [tableView makeViewWithIdentifier:@"cell" owner:self];
-    NSTextField *valueLabel = nil;
-    NSTextField *detailLabel = nil;
-    if (!cell) {
-        cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, tableColumn.width, kRowHeight)];
-        cell.identifier = @"cell";
-
-        valueLabel = [[NSTextField alloc] init];
-        valueLabel.identifier = @"value";
-        valueLabel.editable = NO;
-        valueLabel.selectable = NO;
-        valueLabel.bezeled = NO;
-        valueLabel.drawsBackground = NO;
-        valueLabel.font = [NSFont systemFontOfSize:12.0];
-        valueLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-        valueLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        [cell addSubview:valueLabel];
-
-        detailLabel = [[NSTextField alloc] init];
-        detailLabel.identifier = @"detail";
-        detailLabel.editable = NO;
-        detailLabel.selectable = NO;
-        detailLabel.bezeled = NO;
-        detailLabel.drawsBackground = NO;
-        detailLabel.font = [NSFont systemFontOfSize:11.0];
-        detailLabel.alignment = NSTextAlignmentRight;
-        detailLabel.lineBreakMode = NSLineBreakByTruncatingHead;
-        detailLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        [cell addSubview:detailLabel];
-
-        [NSLayoutConstraint activateConstraints:@[
-            [valueLabel.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:10],
-            [valueLabel.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-            [detailLabel.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-10],
-            [detailLabel.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-            [detailLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:valueLabel.trailingAnchor constant:8],
-        ]];
-    } else {
-        for (NSView *sub in cell.subviews) {
-            if (![sub isKindOfClass:[NSTextField class]]) { continue; }
-            if ([sub.identifier isEqualToString:@"value"]) { valueLabel = (NSTextField *)sub; }
-            if ([sub.identifier isEqualToString:@"detail"]) { detailLabel = (NSTextField *)sub; }
-        }
-    }
-    if (row < 0 || row >= (NSInteger)self.candidates.count) { return cell; }
-    CompletionCandidate *c = self.candidates[row];
-    valueLabel.stringValue = c.value;
-    BOOL selected = (row == self.highlightIndex);
-    // Row backgrounds are drawn by CompletionRowView (see
-    // tableView:rowViewForRow:); cell layer fills proved unreliable.
-    valueLabel.textColor = selected ? (self.selectedFgColor ?: self.fgColor) : self.fgColor;
-    if (c.detail.length > 0) {
-        detailLabel.hidden = NO;
-        detailLabel.stringValue = c.detail;
-        detailLabel.textColor = [(selected ? (self.selectedFgColor ?: self.fgColor) : self.fgColor) colorWithAlphaComponent:0.65];
-    } else {
-        detailLabel.hidden = YES;
-        detailLabel.stringValue = @"";
-    }
-    return cell;
-}
-
-- (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)row {
-    return YES;
-}
-
-// Full-row backgrounds (normal + selected) via a custom row view: layer
-// fills on the cells never composited, so the rows draw themselves the way
-// GTK's #completion > row{background-color:...} / :selected{...} CSS does.
-- (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
-    CompletionRowView *rowView = [tableView makeViewWithIdentifier:@"vimbrow" owner:self];
-    if (!rowView) {
-        rowView = [[CompletionRowView alloc] initWithFrame:NSMakeRect(0, 0, tableView.bounds.size.width, kRowHeight)];
-        rowView.identifier = @"vimbrow";
-    }
-    rowView.dropdown = self;
-    return rowView;
-}
-
-// GTK parity (completion.c on_selection_changed): every selection change —
-// keyboard stepping or a mouse click — reports the newly highlighted value so
-// the owning controller can rewrite the input line (selfunc).
-- (void)tableViewSelectionDidChange:(NSNotification *)notification {
-    if (self.isHidden || self.candidates.count == 0) { return; }
-    NSInteger row = _tableView.selectedRow;
-    if (row < 0 || row >= (NSInteger)self.candidates.count) { return; }
-    self.highlightIndex = row;
-    if (self.onSelectionChanged) { self.onSelectionChanged(self.candidates[row].value); }
+// Click a row: select it and report through the same callback the keyboard
+// path uses. GTK parity (completion.c on_selection_changed): every selection
+// change rewrites the input line.
+- (void)mouseDown:(NSEvent *)event {
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger idx = floor(p.y / kRowHeight);
+    if (idx < 0 || idx >= (NSInteger)self.candidates.count) { return; }
+    self.highlightIndex = idx;
+    [self repaintHighlight];
+    if (self.onSelectionChanged) { self.onSelectionChanged(self.candidates[idx].value); }
 }
 
 @end

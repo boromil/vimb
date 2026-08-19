@@ -1072,6 +1072,11 @@
 
 - (void)hideCommandLine {
     [self.completionDropdown dismiss];
+    // Clear through the field editor when it is active: assigning stringValue
+    // alone is ignored while editing, so the stale editor text reappeared and
+    // appended to the next session's keystrokes.
+    NSText *editor = [self.commandField currentEditor];
+    if (editor) { editor.string = @""; }
     self.commandField.stringValue = @"";
     if ([self inputAutohide]) {
         self.inputRowHeight.constant = 0;
@@ -1341,14 +1346,18 @@
     // prompt in the field makes incsearch + completion (which key off the
     // leading char) work and restores the visual cue of forward vs. backward
     // search vs. ex-command.
+    // Seed the prompt through the field editor when one is live (a stale
+    // editor ignores stringValue and would resurrect its old text).
+    NSString *seed = @"";
     if ([prompt hasPrefix:@"open "] || [prompt hasPrefix:@"tabopen "]) {
-        self.commandField.stringValue = prompt;
+        seed = prompt;
     } else if (prompt.length == 1 &&
                ([prompt isEqualToString:@":"] || [prompt isEqualToString:@"/"] || [prompt isEqualToString:@"?"])) {
-        self.commandField.stringValue = prompt;
-    } else {
-        self.commandField.stringValue = @"";
+        seed = prompt;
     }
+    NSText *seedEditor = [self.commandField currentEditor];
+    if (seedEditor) { seedEditor.string = seed; }
+    self.commandField.stringValue = seed;
     self.commandField.placeholderString = [prompt isEqualToString:@":"] ? @"command" : @"search";
     [self showCommandLine];
 }
@@ -1943,6 +1952,10 @@
     } else if (![line hasPrefix:@":"]) {
         line = [@":" stringByAppendingString:line];
     }
+    // Write through the editor for the same reason as everywhere else:
+    // an active editor ignores a stringValue assignment.
+    NSText *histEditor = [self.commandField currentEditor];
+    if (histEditor) { histEditor.string = line; }
     self.commandField.stringValue = line;
 }
 
@@ -2042,9 +2055,18 @@ static BOOL vbHasPrefix(NSString *s, NSString *prefix) {
 // like GTK's completion_select writing the full line.
 - (void)setCommandFieldTextSuppressingCompletion:(NSString *)text {
     if ([self.commandField.stringValue isEqualToString:text]) { return; }
-    self.commandField.stringValue = text;
+    // While the field is being edited the field editor owns the text: setting
+    // stringValue is ignored by the editor (and re-syncing later produced
+    // franken-lines like ":open www.wp.pl:open www.wp"). Write through the
+    // editor so the shown text is exactly `text`, then park the caret at the
+    // end like GTK's completion_select.
     NSText *editor = [self.commandField currentEditor];
-    if (editor) { [editor setSelectedRange:NSMakeRange(editor.string.length, 0)]; }
+    if (editor) {
+        editor.string = text;
+        [editor setSelectedRange:NSMakeRange(text.length, 0)];
+    } else {
+        self.commandField.stringValue = text;
+    }
 }
 
 // GTK parity: moving through the completion list rewrites the input line
@@ -2108,6 +2130,7 @@ static BOOL vbHasPrefix(NSString *s, NSString *prefix) {
         [candidates addObject:[CompletionCandidate candidateWithValue:s detail:nil]];
     }
     [self.completionDropdown updateWithCandidates:candidates];
+    NSLog(@"[ddbg] candidates=%lu strings=%@", (unsigned long)strings.count, strings);
     // Anchor at the bottom edge of the web container (= top of the docked
     // input row): the dropdown grows upward from there, over the page, like
     // the GTK completion box stacked above the input line. Width matches the

@@ -10,7 +10,7 @@ BUNDLE_ID := org.vimb.browser
 
 SDK      := $(shell xcrun --show-sdk-path)
 CC       ?= cc
-FRAMEWORKS := -framework Cocoa -framework WebKit -framework JavaScriptCore
+FRAMEWORKS := -framework Cocoa -framework WebKit -framework JavaScriptCore -framework QuartzCore
 CFLAGS   := -O2 -Wall -Wextra -fobjc-arc \
             -F $(SDK)/System/Library/Frameworks \
             -DPROJECT=\"$(NAME)\" -DPROJECT_UCFIRST=\"Vimb\" \
