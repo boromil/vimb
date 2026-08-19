@@ -24,6 +24,9 @@
     BOOL _editableFocusActive;
     double _pendingMarkY;
     double _autofocusCooldownUntil; // ignore scripted autofocus briefly post-load
+    // URL of the link under the last right-click, resolved via JS before the
+    // WK context menu is rebuilt (see willOpenMenu:withEvent:).
+    NSString *_contextLinkURL;
 }
 
 // Builds a user script that injects a <style> element carrying the vimb
@@ -272,6 +275,28 @@
     decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     NSURL *url = navigationAction.request.URL;
     NSString *scheme = url.scheme.lowercaseString;
+    // Cmd-click / middle-click on a link opens it in a new tab (Safari-style;
+    // GTK parity: main.c maps CTRL-LeftMouse / MiddleMouse to a new instance,
+    // which is a new tab in this port's single-window model). WKWebView does
+    // NOT route modifier-clicks through createWebViewWithConfiguration, so
+    // intercept them here: a LinkActivated navigation carrying the Command
+    // modifier is exactly that gesture.
+    if (navigationAction.navigationType == WKNavigationTypeLinkActivated) {
+        NSEventModifierFlags mod = navigationAction.modifierFlags;
+        BOOL cmdClick = (mod & NSEventModifierFlagCommand) != 0;
+        // Middle-click arrives as a plain LinkActivated without modifiers
+        // (the button press itself never becomes a key-modified navigation);
+        // WK offers no public button info, so cmd-click is the supported path.
+        if (cmdClick) {
+            id<KeyboardWebViewDelegate> d = self.vbDelegate;
+            if (url.absoluteString.length
+                && [d respondsToSelector:@selector(webView:openTargetURL:newTab:)]) {
+                decisionHandler(WKNavigationActionPolicyCancel);
+                [d webView:self openTargetURL:url.absoluteString newTab:YES];
+                return;
+            }
+        }
+    }
     static NSSet<NSString *> *internal = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -553,9 +578,54 @@ createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
     // menu bar uses, so keep them; only the new-window items are replaced.
     [super willOpenMenu:menu withEvent:event];
 
-    // Best-effort link detection: the default "Open Link"/"Copy Link" items
-    // carry the target URL in their representedObject (URL or string).
-    NSString *linkURL = [self linkURLFromDefaultItems:menu.itemArray];
+    // Link detection: WK's default items on this macOS carry NO URL payload
+    // (representedObject is nil even for "Open Link"/"Copy Link"), so the
+    // URL under the click is resolved from the DOM instead. elementFromPoint
+    // walks up to the enclosing <a> and returns its absolute href; the
+    // right-click point in view coordinates is derived from the event.
+    // WKWebView's menu event arrives with locationInWindow already in this
+    // view's coordinate space (the event is delivered through the web view's
+    // own event pipeline), so converting again against the window would
+    // double-subtract the content insets and shift the point ~55pt low.
+    NSPoint loc = event.locationInWindow;
+    if (!NSPointInRect(loc, self.bounds)) {
+        loc = [self convertPoint:event.locationInWindow fromView:nil];
+    }
+    // DOM coordinates are top-left origin; AppKit view coordinates are
+    // bottom-left origin. Flip y and clamp inside the visible bounds so
+    // elementFromPoint can never be handed a point outside the viewport.
+    CGFloat domY = self.bounds.size.height - loc.y;
+    // WK's own hit-testing (which decides the default menu items) is more
+    // generous than elementFromPoint: an inline <a>'s clickable area includes
+    // its line box, while elementFromPoint can return a sibling/tight box for
+    // the exact same pixel. Probe a small cross pattern so a click that WK
+    // treats as "on the link" resolves to the link here too.
+    NSString *js = [NSString stringWithFormat:
+        @"(function(){var pts=[[0,0],[6,0],[-6,0],[0,6],[0,-6],[8,0],[-8,0],[0,8],[0,-8],[0,12],[0,-12],[0,16],[0,-16],[0,20],[0,-20]];"
+         @"for(var i=0;i<pts.length;i++){var e=document.elementFromPoint(%f+pts[i][0],%f+pts[i][1]);"
+         @"var n=e;while(n&&n.nodeName!=='A'){n=n.parentElement;}"
+         @"if(n&&n.href)return n.href;}"
+         @"return null;})()", loc.x, domY];
+    __block NSString *resolved = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [self evaluateJavaScript:js completionHandler:^(id result, NSError *jsErr) { (void)jsErr;
+        if ([result isKindOfClass:[NSString class]]) { resolved = result; }
+        dispatch_semaphore_signal(sem);
+    }];
+    // evaluateJavaScript reports back on the main thread; since this whole
+    // method already runs on the main thread, spin the run loop in default
+    // mode so the JS result (and menu tracking) stay live while waiting.
+    // Bounded to 0.75s so a stalled page can never wedge the menu open-less.
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:0.75];
+    while (dispatch_semaphore_wait(sem, DISPATCH_TIME_NOW) != 0) {
+        if ([[NSDate date] compare:deadline] != NSOrderedAscending) { break; }
+        if (![[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode
+                                   beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]]) {
+            break;
+        }
+    }
+    _contextLinkURL = resolved;
+    NSString *linkURL = resolved ?: [self linkURLFromDefaultItems:menu.itemArray];
 
     NSArray<NSDictionary *> *tree = [VimbContextMenu menuTreeForContext:@{
         @"link": linkURL ?: @"",   // empty string means "not over a link"
@@ -582,7 +652,9 @@ createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
     for (NSMenuItem *item in replacement) { [menu addItem:item]; }
 }
 
-// Recovers the link URL from the WK default menu items. nil means no link.
+// Recovers the link URL from the WK default menu items. On current macOS the
+// items carry no representedObject payload, so this is only a fallback; the
+// primary path is the DOM resolution in willOpenMenu. nil means no link.
 - (nullable NSString *)linkURLFromDefaultItems:(NSArray<NSMenuItem *> *)items {
     for (NSMenuItem *item in items) {
         id rep = item.representedObject;
@@ -597,11 +669,14 @@ createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
     return nil;
 }
 
-// Builds an "Open in New Tab" item wired to -openLinkInNewTab:.
+// Builds an "Open Link in New Tab" item wired to -openLinkInNewTab:. Falls
+// back to the DOM-resolved _contextLinkURL when the caller passed no payload.
 - (NSMenuItem *)openInNewTabItemWithURLString:(nullable NSString *)url {
+    if (!url.length) { url = _contextLinkURL; }
     NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"Open Link in New Tab"
                                                   action:@selector(openLinkInNewTab:)
                                            keyEquivalent:@""];
+    item.enabled = (url.length > 0);
     item.target = self;
     item.representedObject = @{ @"action": @"openLinkNewTab", @"url": url ?: @"" };
     return item;
