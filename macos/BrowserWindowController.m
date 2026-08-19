@@ -1528,9 +1528,11 @@
             NSString *html = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: [NSString stringWithFormat:@"%lu bytes (non-UTF8)", (unsigned long)data.length];
             NSString *escaped = [self escapeHTML:html];
             NSString *display = [NSString stringWithFormat:
-                @"<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+                @"<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                @"<title>view-source:%@</title><style>"
                 @"body{font:12px Menlo,monospace;white-space:pre-wrap;word-wrap:break-word;"
-                @"padding:16px;margin:0;}</style></head><body>%@</body></html>", escaped];
+                @"padding:16px;margin:0;}</style></head><body>%@</body></html>",
+                uri, escaped];
             [weakSelf openViewSourceTabWithHTML:display];
         });
     }] resume];
@@ -1566,20 +1568,20 @@
     "      if(++n>CAP||d>DEPTH){html+='<li>…</li>';continue;}"
     "      const tag=child.tagName.toLowerCase();"
     "      let label='<'+tag;"
-    "      if(child.id)label+=' id=\"'+esc(child.id)+'\"';"
-    "      if(child.className&&typeof child.className==='string')label+=' class=\"'+esc(child.className)+'\"';"
+    "      if(child.id)label+=' id=\"'+child.id+'\"';"
+    "      if(child.className&&typeof child.className==='string')label+=' class=\"'+child.className+'\"';"
     "      label+='>';"
     "      let txt='';"
     "      if(child.children.length===0){ const t=(child.textContent||'').trim(); txt=t?esc(t.slice(0,80)):''; }"
-    "      const href=child.href?(' href=\"'+esc(child.href)+'\"'):'';"
-    "      html+='<li><details'+(d<2?' open':'')+'><summary>'+label+href+(txt?' '+txt:'')+'</summary>';"
-    "      if(child.children.length)walk(child,d+1);"
+    "      if(child.href)label+=' href=\"'+child.href+'\"';"
+    "      html+='<li><details'+(d<2?' open':'')+'><summary>'+esc(label)+(txt?' '+txt:'')+'</summary>';"
+    "      if(child.children.length){html+='<ul>';walk(child,d+1);html+='</ul>';}"
     "      html+='</details></li>';"
     "    }"
     "  }"
     "  walk(document.documentElement||document.body,0);"
     "  html+='</ul>';"
-    "  return '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>"
+    "  return '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>vimb DOM inspector</title><style>"
     "    body{font:12px Menlo,monospace;margin:16px;background:#fff;color:#111;}"
     "    ul{list-style:none;padding-left:14px;} summary{cursor:pointer;}"
     "    summary:hover{background:#eee;}</style></head><body>"

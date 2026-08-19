@@ -133,9 +133,21 @@ typedef HBResult (^HBCommand)(unichar unicode, int key, unichar key2, unichar ke
 
 - (BOOL)handleKeyDown:(NSEvent *)event inWebView:(BOOL)inWebView {
     (void)inWebView;
+    NSString *chars = event.charactersIgnoringModifiers;
+    // charactersIgnoringModifiers drops Shift: pressing Shift-F yields "f", so
+    // shifted normal-mode commands (gF, gH, gT vs gt) could never be reached.
+    // Re-apply Shift for single ASCII letters so the parser sees the intended
+    // uppercase command character.
+    if ((event.modifierFlags & NSEventModifierFlagShift) != 0
+        && chars.length == 1) {
+        unichar c = [chars characterAtIndex:0];
+        if (c >= 'a' && c <= 'z') {
+            chars = [NSString stringWithFormat:@"%C", (unichar)(c - 'a' + 'A')];
+        }
+    }
     return [self handleKeyCode:(int)event.keyCode
                      modifiers:(unsigned long)event.modifierFlags
-                    characters:event.charactersIgnoringModifiers];
+                    characters:chars];
 }
 
 - (BOOL)handleKeyCode:(int)keyCode
