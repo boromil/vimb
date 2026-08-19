@@ -633,12 +633,21 @@ createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
         @"forward": @(self.canGoForward),
     }];
 
-    // Keep every default item except the "open … in new window" family, which
-    // becomes an "open in new tab" item (parity with fix_open_in_new_window_*).
+    // Keep every default item except:
+    // - the "open … in new window" family, which becomes an "open in new tab"
+    //   item (parity with fix_open_in_new_window_*), and
+    // - WK's "Inspect Element", which on current macOS (26/27) opens a
+    //   WebInspector frontend in a TUINSWindow that never gets ordered on
+    //   screen (verified on a minimal WKWebView app too — the 500x500 window
+    //   exists, claims onscreen after makeKeyAndOrderFront, yet paints
+    //   nothing). Replace it with vimb's own DOM inspector (the gF tab) so
+    //   the menu item does something visible.
     NSMutableArray *replacement = [NSMutableArray array];
     for (NSMenuItem *item in menu.itemArray) {
         if ([VimbContextMenu isOpenInNewWindowIdentifier:item.identifier]) {
             [replacement addObject:[self openInNewTabItemWithURLString:linkURL]];
+        } else if ([item.identifier isEqualToString:@"WKMenuItemIdentifierInspectElement"]) {
+            [replacement addObject:[self domInspectorItem]];
         } else {
             [replacement addObject:item];
         }
@@ -717,6 +726,27 @@ createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
     if ([items.firstObject isSeparatorItem]) { [items removeObjectAtIndex:0]; }
     if ([items.lastObject isSeparatorItem]) { [items removeLastObject]; }
     return items;
+}
+
+// Builds the "Inspect Element" replacement that opens vimb's own DOM
+// inspector tab (same as gF). WK's native frontend window is broken on this
+// macOS (see willOpenMenu), so the context-menu entry is rewired to the
+// in-app inspector.
+- (NSMenuItem *)domInspectorItem {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"Inspect Element"
+                                                  action:@selector(openDOMInspector:)
+                                           keyEquivalent:@""];
+    item.target = self;
+    item.enabled = YES;
+    return item;
+}
+
+- (void)openDOMInspector:(id)sender {
+    (void)sender;
+    id<VimDelegate> d = [self vbVimDelegate];
+    if (d && [d respondsToSelector:@selector(vimViewInspector)]) {
+        [d vimViewInspector];
+    }
 }
 
 - (void)openLinkInNewTab:(id)sender {
